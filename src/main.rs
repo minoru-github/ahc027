@@ -1,4 +1,4 @@
-#![allow(unused)]
+#![allow(unused, non_snake_case)]
 use itertools::Itertools;
 use my_lib::*;
 use procon_input::*;
@@ -15,6 +15,8 @@ use std::{
     rc::Rc,
     slice::SliceIndex,
 };
+
+use crate::solver::FirstCleaning;
 
 fn main() {
     let start_time = my_lib::time::update();
@@ -59,6 +61,13 @@ impl Sim {
     }
 
     pub fn run(&mut self) {
+        let mut output = Output::new();
+        let mut first_cleaning = FirstCleaning::new(self.input.clone());
+        first_cleaning.run(&mut output);
+        output.submit();
+
+        return;
+
         let mut rng: Mcg128Xsl64 = rand_pcg::Pcg64Mcg::new(890482);
         let mut cnt = 0 as usize; // 試行回数
 
@@ -104,27 +113,70 @@ impl Sim {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct Input {
-    n: usize,
+    pub N: usize,
+    pub h: Vec<Vec<char>>,
+    pub v: Vec<Vec<char>>,
+    pub d: Vec<Vec<i64>>,
+}
+
+impl std::fmt::Display for Input {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "{}", self.N)?;
+        for i in 0..self.N - 1 {
+            writeln!(f, "{}", self.h[i].iter().collect::<String>())?;
+        }
+        for i in 0..self.N {
+            writeln!(f, "{}", self.v[i].iter().collect::<String>())?;
+        }
+        for i in 0..self.N {
+            writeln!(f, "{}", self.d[i].iter().join(" "))?;
+        }
+        Ok(())
+    }
 }
 
 impl Input {
     fn read() -> Self {
-        let n = read_u();
+        let N = read_u();
 
-        Input { n }
+        let mut h: Vec<Vec<char>> = vec![vec!['0'; N]; N - 1];
+        for i in 0..N - 1 {
+            let c_vec = read_line_as_chars();
+            for j in 0..N {
+                h[i][j] = c_vec[j];
+            }
+        }
+
+        let mut v: Vec<Vec<char>> = vec![vec!['0'; N - 1]; N];
+        for i in 0..N {
+            let c_vec = read_line_as_chars();
+            for j in 0..N - 1 {
+                v[i][j] = c_vec[j];
+            }
+        }
+
+        let mut d: Vec<Vec<i64>> = vec![vec![0; N]; N];
+        for i in 0..N {
+            let mut d_vec = read_i_vec();
+            for j in 0..N {
+                d[i][j] = d_vec[j];
+            }
+        }
+
+        Input { N, h, v, d }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct Output {
-    //score: usize,
+    out: Vec<char>,
 }
 
 impl Output {
     fn new() -> Self {
-        Output {}
+        Output { out: vec![] }
     }
 
     fn remove(&self, output: &mut Self, rng: &mut Mcg128Xsl64) {
@@ -132,12 +184,52 @@ impl Output {
     }
 
     fn submit(&self) {
-        //println!("{}", );
+        println!("{}", self.out.iter().collect::<String>());
     }
 }
 
 mod solver {
     use super::*;
+
+    pub struct FirstCleaning {
+        input: Input,
+    }
+
+    impl FirstCleaning {
+        pub fn new(input: Input) -> Self {
+            FirstCleaning { input }
+        }
+
+        pub fn run(self, output: &mut Output) {
+            let mut has_seen = vec![vec![false; self.input.N]; self.input.N];
+
+            let start = (0, 0);
+            self.dfs(start, &mut has_seen, output);
+        }
+
+        fn dfs(&self, (i, j): (usize, usize), has_seen: &mut Vec<Vec<bool>>, output: &mut Output) {
+            has_seen[i][j] = true;
+            for dir in 0..4_usize {
+                let (di, dj) = DIJ[dir];
+                let (ni, nj) = (i + di, j + dj);
+                if ni >= self.input.N || nj >= self.input.N {
+                    continue;
+                }
+                if has_seen[ni][nj] {
+                    continue;
+                }
+                if (di == 0 && self.input.v[i][min(j, nj)] == '0')
+                    || (dj == 0 && self.input.h[min(i, ni)][j] == '0')
+                {
+                    let c = DIR.chars().nth(dir).unwrap();
+                    output.out.push(c);
+                    self.dfs((ni, nj), has_seen, output);
+                    let c = DIR.chars().nth((dir + 2) % 4).unwrap();
+                    output.out.push(c);
+                }
+            }
+        }
+    }
 
     pub fn mountain(
         best_state: &mut State,
@@ -510,3 +602,6 @@ mod procon_input {
         read_block::<String>().chars().collect::<Vec<char>>()
     }
 }
+
+const DIR: &str = "RDLU";
+const DIJ: [(usize, usize); 4] = [(0, 1), (1, 0), (0, !0), (!0, 0)];
