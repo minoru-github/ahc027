@@ -65,51 +65,51 @@ impl Sim {
         let mut first_cleaning = FirstCleaning::new(self.input.clone());
         first_cleaning.run(&mut output);
         output.submit();
-
-        return;
+        let (score, _) = Tools::compute_score(&self.input, &output);
 
         let mut rng: Mcg128Xsl64 = rand_pcg::Pcg64Mcg::new(890482);
         let mut cnt = 0 as usize; // 試行回数
 
-        //let mut initial_state = State::new();
-        let mut best_output = Output::new();
-        let mut best_state = State::new();
-        best_state.compute_score();
+        // //let mut initial_state = State::new();
+        // let mut best_output = Output::new();
+        // let mut best_state = State::new();
+        // best_state.compute_score();
 
-        'outer: loop {
-            let current_time = my_lib::time::update();
-            if current_time >= my_lib::time::LIMIT {
-                break;
-            }
+        // 'outer: loop {
+        //     let current_time = my_lib::time::update();
+        //     if current_time >= my_lib::time::LIMIT {
+        //         break;
+        //     }
 
-            cnt += 1;
+        //     cnt += 1;
 
-            let mut output = Output::new();
+        //     let mut output = Output::new();
 
-            // A:近傍探索
-            let mut state: State = best_state.clone();
-            state.change(&mut output, &mut rng);
+        //     // A:近傍探索
+        //     let mut state: State = best_state.clone();
+        //     state.change(&mut output, &mut rng);
 
-            // B:壊して再構築
-            // best_outputの一部を破壊して、それまでのoutputを使ってstateを作り直して再構築したり
-            // outputの変形
-            // best_output.remove(&mut output, &mut rng);
-            // let mut state: State = initial_state.clone();
-            // stateを新outputの情報で復元
-            // そこから続きやる
+        //     // B:壊して再構築
+        //     // best_outputの一部を破壊して、それまでのoutputを使ってstateを作り直して再構築したり
+        //     // outputの変形
+        //     // best_output.remove(&mut output, &mut rng);
+        //     // let mut state: State = initial_state.clone();
+        //     // stateを新outputの情報で復元
+        //     // そこから続きやる
 
-            // スコア計算
-            state.compute_score();
+        //     // スコア計算
+        //     state.compute_score();
 
-            // 状態更新
-            solver::mountain(&mut best_state, &state, &mut best_output, &output);
-            //solver::simulated_annealing(&mut best_state, &state, &mut best_output, &output, self.current_time, &mut rng);
-        }
+        //     // 状態更新
+        //     solver::mountain(&mut best_state, &state, &mut best_output, &output);
+        //     //solver::simulated_annealing(&mut best_state, &state, &mut best_output, &output, self.current_time, &mut rng);
+        // }
 
-        best_output.submit();
+        //best_output.submit();
 
         eprintln!("{} ", cnt);
-        eprintln!("{} ", best_state.score);
+        let best_score = score;
+        eprintln!("{} ", best_score);
     }
 }
 
@@ -605,3 +605,191 @@ mod procon_input {
 
 const DIR: &str = "RDLU";
 const DIJ: [(usize, usize); 4] = [(0, 1), (1, 0), (0, !0), (!0, 0)];
+
+mod Tools {
+    use super::*;
+
+    #[macro_export]
+    macro_rules! mat {
+	($($e:expr),*) => { Vec::from(vec![$($e),*]) };
+	($($e:expr,)*) => { Vec::from(vec![$($e),*]) };
+	($e:expr; $d:expr) => { Vec::from(vec![$e; $d]) };
+	($e:expr; $d:expr $(; $ds:expr)+) => { Vec::from(vec![mat![$e $(; $ds)*]; $d]) };
+}
+
+    #[derive(Clone, Debug)]
+    pub struct Eval {
+        pub score: i64,
+        pub err: String,
+        pub d: Vec<Vec<i64>>,
+        pub route: Vec<(usize, usize)>,
+        pub last_visited: Vec<Vec<usize>>,
+        pub edge_count: Vec<Vec<(i32, i32)>>,
+        pub S: Vec<i64>,
+        pub average: Vec<Vec<f64>>,
+    }
+
+    impl Eval {
+        fn get_a(&self, t: usize) -> Vec<Vec<i64>> {
+            let N = self.d.len();
+            let L = self.route.len() - 1;
+            let mut a = mat![0; N; N];
+            let mut last_visited2 = self.last_visited.clone();
+            for t in L..L + t {
+                let (i, j) = self.route[t - L];
+                last_visited2[i][j] = t;
+            }
+            for i in 0..N {
+                for j in 0..N {
+                    a[i][j] = (L + t - last_visited2[i][j]) as i64 * self.d[i][j];
+                }
+            }
+            let (i, j) = self.route[t];
+            a[i][j] = 0;
+            a
+        }
+    }
+
+    fn can_move(
+        N: usize,
+        h: &Vec<Vec<char>>,
+        v: &Vec<Vec<char>>,
+        i: usize,
+        j: usize,
+        dir: usize,
+    ) -> bool {
+        let (di, dj) = DIJ[dir];
+        let i2 = i + di;
+        let j2 = j + dj;
+        if i2 >= N || j2 >= N {
+            return false;
+        }
+        if di == 0 {
+            v[i][j.min(j2)] == '0'
+        } else {
+            h[i.min(i2)][j] == '0'
+        }
+    }
+
+    fn evaluate(input: &Input, out: &[char]) -> Eval {
+        let mut last_visited = mat![!0; input.N; input.N];
+        let L = out.len();
+        let mut i = 0;
+        let mut j = 0;
+        let mut route = vec![];
+        let mut S = vec![];
+        let mut average = mat![0.0; input.N; input.N];
+        let mut edge_count = mat![(0, 0); input.N; input.N];
+        for t in 0..L {
+            route.push((i, j));
+            last_visited[i][j] = t;
+            if let Some(dir) = DIR.find(out[t]) {
+                if can_move(input.N, &input.h, &input.v, i, j, dir) {
+                    if DIJ[dir].0 == 0 {
+                        edge_count[i][j.min(j + DIJ[dir].1)].0 += 1;
+                    } else {
+                        edge_count[i.min(i + DIJ[dir].0)][j].1 += 1;
+                    }
+                    i += DIJ[dir].0;
+                    j += DIJ[dir].1;
+                } else {
+                    return Eval {
+                        score: 0,
+                        err: format!("The output route hits a wall."),
+                        d: input.d.clone(),
+                        route,
+                        last_visited: mat![0; input.N; input.N],
+                        S,
+                        average,
+                        edge_count,
+                    };
+                }
+            } else {
+                return Eval {
+                    score: 0,
+                    err: format!("Illegal output char: {}", out[t]),
+                    d: input.d.clone(),
+                    route,
+                    last_visited: mat![0; input.N; input.N],
+                    S,
+                    average,
+                    edge_count,
+                };
+            }
+        }
+        route.push((i, j));
+        if (i, j) != (0, 0) {
+            return Eval {
+                score: 0,
+                err: format!("The output route does not return to (0, 0)."),
+                d: input.d.clone(),
+                route,
+                last_visited: mat![0; input.N; input.N],
+                S,
+                average,
+                edge_count,
+            };
+        }
+        for i in 0..input.N {
+            for j in 0..input.N {
+                if last_visited[i][j] == !0 {
+                    return Eval {
+                        score: 0,
+                        err: format!("The output route does not visit ({}, {}).", i, j),
+                        d: input.d.clone(),
+                        route,
+                        last_visited: mat![0; input.N; input.N],
+                        S,
+                        average,
+                        edge_count,
+                    };
+                }
+            }
+        }
+        let mut s = 0;
+        let mut sum_d = 0;
+        for i in 0..input.N {
+            for j in 0..input.N {
+                s += (L - last_visited[i][j]) as i64 * input.d[i][j];
+                sum_d += input.d[i][j];
+            }
+        }
+        let mut last_visited2 = last_visited.clone();
+        let mut sum = mat![0; input.N; input.N];
+        for t in L..2 * L {
+            let (i, j) = route[t - L];
+            let dt = (t - last_visited2[i][j]) as i64;
+            let a = dt * input.d[i][j];
+            sum[i][j] += dt * (dt - 1) / 2 * input.d[i][j];
+            s -= a;
+            last_visited2[i][j] = t;
+            S.push(s);
+            s += sum_d;
+        }
+        for i in 0..input.N {
+            for j in 0..input.N {
+                average[i][j] = sum[i][j] as f64 / L as f64;
+            }
+        }
+        let score = (2 * S.iter().sum::<i64>() + L as i64) / (2 * L) as i64;
+        Eval {
+            score,
+            err: String::new(),
+            d: input.d.clone(),
+            route,
+            last_visited,
+            S,
+            average,
+            edge_count,
+        }
+    }
+
+    pub fn compute_score(input: &Input, out: &Output) -> (i64, String) {
+        let ret = evaluate(input, &out.out);
+        if ret.err.len() > 0 {
+            (0, ret.err)
+        } else {
+            (ret.score, ret.err)
+        }
+    }
+}
