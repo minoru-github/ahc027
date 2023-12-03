@@ -16,7 +16,7 @@ use std::{
     slice::SliceIndex,
 };
 
-use crate::solver::FirstCleaning;
+use crate::solver::SimpleDfs;
 
 fn main() {
     let start_time = my_lib::time::update();
@@ -61,10 +61,24 @@ impl Sim {
     }
 
     pub fn run(&mut self) {
-        let mut output = Output::new();
-        let mut first_cleaning = FirstCleaning::new(self.input.clone());
-        first_cleaning.run(&mut output);
+        let mut output: Output = Output::new();
+
+        if false {
+            let mut simple_dfs = SimpleDfs::new(self.input.clone());
+            let start = (0, 0);
+            simple_dfs.run(&mut output, start);
+        } else {
+            let mut dfs = solver::DfsUntilWholeCleaning::new(self.input.clone());
+            let start = (0, 0);
+            let goal = dfs.run(&mut output, start);
+            let start = goal;
+            let goal = (0, 0);
+            let path = solver::compute_path_with_bfs(&self.input, start, goal);
+            output.add_path(&path);
+        }
+
         output.submit();
+
         let (score, _) = Tools::compute_score(&self.input, &output);
 
         let mut rng: Mcg128Xsl64 = rand_pcg::Pcg64Mcg::new(890482);
@@ -179,6 +193,12 @@ impl Output {
         Output { out: vec![] }
     }
 
+    fn add_path(&mut self, path: &Vec<char>) {
+        for &c in path.iter() {
+            self.out.push(c);
+        }
+    }
+
     fn remove(&self, output: &mut Self, rng: &mut Mcg128Xsl64) {
         // https://atcoder.jp/contests/ahc014/submissions/35567589 L558
     }
@@ -189,21 +209,22 @@ impl Output {
 }
 
 mod solver {
+    use std::vec;
+
     use super::*;
 
-    pub struct FirstCleaning {
+    pub struct SimpleDfs {
         input: Input,
     }
 
-    impl FirstCleaning {
+    impl SimpleDfs {
         pub fn new(input: Input) -> Self {
-            FirstCleaning { input }
+            SimpleDfs { input }
         }
 
-        pub fn run(self, output: &mut Output) {
+        pub fn run(self, output: &mut Output, start: (usize, usize)) {
             let mut has_seen = vec![vec![false; self.input.N]; self.input.N];
 
-            let start = (0, 0);
             self.dfs(start, &mut has_seen, output);
         }
 
@@ -229,6 +250,141 @@ mod solver {
                 }
             }
         }
+    }
+
+    pub struct DfsUntilWholeCleaning {
+        input: Input,
+    }
+
+    impl DfsUntilWholeCleaning {
+        pub fn new(input: Input) -> Self {
+            DfsUntilWholeCleaning { input }
+        }
+
+        pub fn run(self, output: &mut Output, start: (usize, usize)) -> (usize, usize) {
+            let mut has_seen = vec![vec![false; self.input.N]; self.input.N];
+            let mut has_seen_cnt = 0;
+            let mut goal_point = (std::usize::MAX, std::usize::MAX);
+
+            self.dfs(
+                start,
+                &mut has_seen,
+                output,
+                &mut has_seen_cnt,
+                &mut goal_point,
+            );
+
+            goal_point
+        }
+
+        fn dfs(
+            &self,
+            (i, j): (usize, usize),
+            has_seen: &mut Vec<Vec<bool>>,
+            output: &mut Output,
+            has_seen_cnt: &mut usize,
+            goal_point: &mut (usize, usize),
+        ) {
+            has_seen[i][j] = true;
+            for dir in 0..4_usize {
+                let (di, dj) = DIJ[dir];
+                let (ni, nj) = (i + di, j + dj);
+                if ni >= self.input.N || nj >= self.input.N {
+                    continue;
+                }
+                if has_seen[ni][nj] {
+                    continue;
+                }
+                if (di == 0 && self.input.v[i][min(j, nj)] == '0')
+                    || (dj == 0 && self.input.h[min(i, ni)][j] == '0')
+                {
+                    let c = DIR.chars().nth(dir).unwrap();
+                    output.out.push(c);
+                    *has_seen_cnt += 1;
+                    if (*has_seen_cnt == self.input.N * self.input.N - 1) {
+                        *goal_point = (ni, nj);
+                    }
+
+                    self.dfs((ni, nj), has_seen, output, has_seen_cnt, goal_point);
+                    if (*has_seen_cnt == self.input.N * self.input.N - 1) {
+                        return;
+                    }
+                    let c = DIR.chars().nth((dir + 2) % 4).unwrap();
+                    output.out.push(c);
+                }
+            }
+        }
+    }
+
+    pub fn compute_path_with_bfs(
+        input: &Input,
+        start: (usize, usize),
+        goal: (usize, usize),
+    ) -> Vec<char> {
+        let mut q = VecDeque::new();
+        q.push_back(start);
+        let mut prev = vec![vec![(0, 0); input.N]; input.N];
+        let mut min_dist = vec![vec![std::usize::MAX; input.N]; input.N];
+        while let Some((i, j)) = q.pop_front() {
+            for dir in 0..4_usize {
+                let (di, dj) = DIJ[dir];
+                let (ni, nj) = (i + di, j + dj);
+                if ni >= input.N || nj >= input.N {
+                    continue;
+                }
+
+                if (di == 0 && input.v[i][min(j, nj)] == '0')
+                    || (dj == 0 && input.h[min(i, ni)][j] == '0')
+                {
+                    // 最短経路を更新
+                    if min_dist[ni][nj] > min_dist[i][j] + 1 {
+                        min_dist[ni][nj] = min_dist[i][j] + 1;
+                        prev[ni][nj] = (i, j);
+                        q.push_back((ni, nj));
+                    }
+                }
+            }
+        }
+
+        let mut path = VecDeque::new();
+        let mut cur = goal;
+        while cur != start {
+            let (i, j) = cur;
+            let (pi, pj) = prev[i][j];
+
+            if pi == i {
+                if pj < j {
+                    path.push_front('R');
+                } else {
+                    path.push_front('L');
+                }
+            } else {
+                if pi < i {
+                    path.push_front('D');
+                } else {
+                    path.push_front('U');
+                }
+            }
+
+            cur = prev[i][j];
+        }
+
+        path.into_iter().collect()
+    }
+
+    pub fn get_back_path(path: &Vec<char>) -> Vec<char> {
+        let mut back_path = vec![];
+        for &c in path.iter().rev() {
+            let c = match c {
+                'R' => 'L',
+                'L' => 'R',
+                'U' => 'D',
+                'D' => 'U',
+                _ => unreachable!(),
+            };
+            back_path.push(c);
+        }
+        back_path
     }
 
     pub fn mountain(
