@@ -227,6 +227,10 @@ mod solver {
         center: (usize, usize),
         points: BTreeSet<(usize, usize)>,
         length: usize,
+        d_ave: i64,
+        d_max: i64,
+        d_min: i64,
+        d_sum: i64,
     }
 
     impl Area {
@@ -238,6 +242,10 @@ mod solver {
                 center,
                 points,
                 length,
+                d_ave: 0,
+                d_max: std::i64::MIN,
+                d_min: std::i64::MAX,
+                d_sum: 0,
             }
         }
 
@@ -283,6 +291,15 @@ mod solver {
                     }
                 }
             }
+        }
+
+        pub fn compute_d(&mut self, input: &Input) {
+            for (i, j) in self.points.iter() {
+                self.d_sum += input.d[*i][*j];
+                self.d_max = self.d_max.max(input.d[*i][*j]);
+                self.d_min = self.d_min.min(input.d[*i][*j]);
+            }
+            self.d_ave = self.d_sum / self.points.len() as i64;
         }
     }
 
@@ -340,6 +357,7 @@ mod solver {
             let mut rng = rand_pcg::Pcg64Mcg::new(890482);
             remain_points.make_contiguous().shuffle(&mut rng);
 
+            let mut id_points_map = BTreeMap::new();
             while let Some((i, j)) = remain_points.pop_front() {
                 let mut has_connected = false;
                 for dir in 0..4_usize {
@@ -355,6 +373,10 @@ mod solver {
                         || (dj == 0 && input.h[min(i, ni)][j] == '0')
                     {
                         self.id_map[i][j] = self.id_map[ni][nj];
+                        id_points_map
+                            .entry(self.id_map[i][j])
+                            .or_insert_with(Vec::new)
+                            .push((i, j));
                         has_connected = true;
                         break;
                     } else {
@@ -363,6 +385,17 @@ mod solver {
                 }
                 if !has_connected {
                     remain_points.push_back((i, j));
+                }
+            }
+
+            for (id, points) in id_points_map.iter() {
+                for area in self.areas.iter_mut() {
+                    if area.id == *id {
+                        for (i, j) in points.iter() {
+                            area.points.insert((*i, *j));
+                        }
+                        break;
+                    }
                 }
             }
         }
