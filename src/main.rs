@@ -81,6 +81,7 @@ impl Sim {
             areas.devide(&self.input);
             areas.set_id_to_map();
             areas.connect_remain_points(&self.input);
+            areas.compute_d(&self.input);
             areas.debug_id_map();
         }
 
@@ -400,6 +401,12 @@ mod solver {
             }
         }
 
+        pub fn compute_d(&mut self, input: &Input) {
+            for area in self.areas.iter_mut() {
+                area.compute_d(input);
+            }
+        }
+
         pub fn debug_id_map(&self) {
             eprintln!("★★★id_map★★★");
             for i in 0..self.id_map.len() {
@@ -407,6 +414,14 @@ mod solver {
                     eprint!("{} ", self.id_map[i][j]);
                 }
                 eprintln!();
+            }
+
+            eprintln!("★★★area★★★");
+            for area in self.areas.iter() {
+                eprintln!(
+                    "id: {}, center: {:?}, d_ave: {}, d_sum: {}, d_min: {}, d_max: {}",
+                    area.id, area.center, area.d_ave, area.d_sum, area.d_min, area.d_max
+                );
             }
         }
     }
