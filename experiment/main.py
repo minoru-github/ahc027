@@ -26,8 +26,9 @@ def parse_from_stderr(stderr: str):
     out = stderr.splitlines()
     cnt = int(out[0])
     score = int(out[1])
-    duration = float(out[2])
-    return cnt, score, duration
+    duration = float(out[3])
+    N = int(out[2])
+    return cnt, score, duration, N
 
 
 def run_ahc_exe(filename: pathlib.Path):
@@ -37,8 +38,8 @@ def run_ahc_exe(filename: pathlib.Path):
     with open(path) as text:
         proc = subprocess.run(cmd, shell=True, stdin=text,
                               stdout=PIPE, stderr=PIPE, text=True)
-        cnt, score, duration = parse_from_stderr(proc.stderr)
-    return filename.name, cnt, score, duration
+        cnt, score, duration, N = parse_from_stderr(proc.stderr)
+    return filename.name, cnt, score, duration, N
 
 
 def run_multi():
@@ -55,21 +56,22 @@ def run_multi():
 def output_result(result_list):
     total_score = 0
     total_cnt = 0
+    print("file;    total_score;         score;   cnt;   time;  N;")
     for i, result in enumerate(result_list):
-        filename, cnt, score, duration = result
+        filename, cnt, score, duration, N = result
         total_score += score
         total_cnt += cnt
         check_point_col = set_color_to_check_point(i)
         score_col = set_color_to_score(score)
-        print("{} => ".format(filename[:4])
-              + "total_score: {}{}{}, ".format(check_point_col,
-                                               total_score, Color.RESET)
-              + "score: {}{}{}, ".format(score_col, score, Color.RESET)
-              + "cnt: {:5d}, ".format(cnt)
-              + "total_cnt: {}{}{}, " .format(check_point_col,
-                                              total_cnt, Color.RESET)
-              + "time: {:.3f}".format(duration))
-    print("total: {}".format(total_score))
+        print("{};".format(filename[:4])
+              + "{}{:15d}{};".format(check_point_col, total_score, Color.RESET)
+              + "{}{:14d}{};".format(score_col, score, Color.RESET)
+              + "{:6d};".format(cnt)
+              # + "{}{:8d}{};" .format(check_point_col, total_cnt, Color.RESET)
+              + " {:.4f};".format(duration)
+              + " {:2d}".format(N)
+              )
+    # print("total: {}".format(total_score))
 
 
 if __name__ == "__main__":
