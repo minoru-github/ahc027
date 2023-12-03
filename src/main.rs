@@ -63,11 +63,12 @@ impl Sim {
     pub fn run(&mut self) {
         let mut output: Output = Output::new();
 
-        if false {
+        let solve = "3";
+        if solve == "1" {
             let mut simple_dfs = SimpleDfs::new(self.input.clone());
             let start = (0, 0);
             simple_dfs.run(&mut output, start);
-        } else {
+        } else if solve == "2" {
             let mut dfs = solver::DfsUntilWholeCleaning::new(self.input.clone());
             let start = (0, 0);
             let goal = dfs.run(&mut output, start);
@@ -75,6 +76,7 @@ impl Sim {
             let goal = (0, 0);
             let path = solver::compute_path_with_bfs(&self.input, start, goal);
             output.add_path(&path);
+        } else if solve == "3" {
         }
 
         output.submit();
@@ -213,6 +215,18 @@ mod solver {
     use std::vec;
 
     use super::*;
+
+    pub fn compute_d_ranking(input: &Input) -> Vec<(i64, (usize, usize))> {
+        let mut d_ranking = vec![];
+        for i in 0..input.N {
+            for j in 0..input.N {
+                d_ranking.push((input.d[i][j], (i, j)));
+            }
+        }
+        d_ranking.sort();
+        d_ranking.reverse();
+        d_ranking
+    }
 
     pub struct SimpleDfs {
         input: Input,
