@@ -124,6 +124,7 @@ impl Sim {
         eprintln!("{} ", cnt);
         let best_score = score;
         eprintln!("{} ", best_score);
+        eprintln!("{} ", self.input.N);
     }
 }
 
