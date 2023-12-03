@@ -77,6 +77,11 @@ impl Sim {
             let path = solver::compute_path_with_bfs(&self.input, start, goal);
             output.add_path(&path);
         } else if solve == "3" {
+            let mut areas = solver::Areas::new(self.input.N);
+            areas.devide(&self.input);
+            areas.set_id_to_map();
+            areas.connect_remain_points(&self.input);
+            areas.debug_id_map();
         }
 
         output.submit();
@@ -215,6 +220,163 @@ mod solver {
     use std::vec;
 
     use super::*;
+
+    #[derive(Clone, Debug)]
+    pub struct Area {
+        id: usize,
+        center: (usize, usize),
+        points: BTreeSet<(usize, usize)>,
+        length: usize,
+    }
+
+    impl Area {
+        pub fn new(id: usize, center: (usize, usize), length: usize) -> Self {
+            let mut points = BTreeSet::new();
+            points.insert(center);
+            Area {
+                id,
+                center,
+                points,
+                length,
+            }
+        }
+
+        pub fn identify_same_area(&mut self, input: &Input) {
+            let mut q = VecDeque::new();
+            q.push_back(self.center);
+            let mut has_seen = vec![vec![false; self.length]; self.length];
+            let offset_i = self.center.0 - self.length / 2;
+            let offset_j = self.center.1 - self.length / 2;
+            let i = self.center.0;
+            let j = self.center.1;
+            has_seen[i - offset_i][j - offset_j] = true;
+            while let Some((i, j)) = q.pop_front() {
+                for dir in 0..4_usize {
+                    let (di, dj) = DIJ[dir];
+                    let (ni, nj) = (i + di, j + dj);
+                    if ni >= input.N || nj >= input.N {
+                        continue;
+                    }
+                    let dist = (ni as i64 - self.center.0 as i64).abs()
+                        + (nj as i64 - self.center.1 as i64).abs();
+                    if dist > self.length as i64 {
+                        continue;
+                    }
+                    let (ni_with_offset, nj_with_offset) =
+                        (ni as i64 - offset_i as i64, nj as i64 - offset_j as i64);
+                    if ni_with_offset < 0 || nj_with_offset < 0 {
+                        continue;
+                    }
+                    if ni_with_offset >= self.length as i64 || nj_with_offset >= self.length as i64
+                    {
+                        continue;
+                    }
+                    if has_seen[ni - offset_i][nj - offset_j] {
+                        continue;
+                    }
+                    if (di == 0 && input.v[i][min(j, nj)] == '0')
+                        || (dj == 0 && input.h[min(i, ni)][j] == '0')
+                    {
+                        q.push_back((ni, nj));
+                        has_seen[ni - offset_i][nj - offset_j] = true;
+                        self.points.insert((ni, nj));
+                    }
+                }
+            }
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    pub struct Areas {
+        areas: Vec<Area>,
+        id_map: Vec<Vec<usize>>,
+    }
+
+    const INVALID_ID: usize = 0;
+    impl Areas {
+        pub fn new(N: usize) -> Self {
+            let id_map = vec![vec![INVALID_ID; N]; N];
+            Areas {
+                areas: vec![],
+                id_map,
+            }
+        }
+
+        pub fn devide(&mut self, input: &Input) {
+            const LENGTH: usize = 5; // 奇数にする
+            let groups = input.N / LENGTH;
+
+            const FIRST_ID: usize = 1;
+            let mut id = FIRST_ID;
+            for i in 0..groups {
+                for j in 0..groups {
+                    let center = (i * LENGTH + LENGTH / 2, j * LENGTH + LENGTH / 2);
+                    let mut area = Area::new(id, center, LENGTH);
+                    area.identify_same_area(input);
+                    self.areas.push(area);
+                    id += 1;
+                }
+            }
+        }
+
+        pub fn set_id_to_map(&mut self) {
+            for area in self.areas.iter() {
+                for (i, j) in area.points.iter() {
+                    self.id_map[*i][*j] = area.id;
+                }
+            }
+        }
+
+        pub fn connect_remain_points(&mut self, input: &Input) {
+            let mut remain_points = VecDeque::new();
+            for i in 0..input.N {
+                for j in 0..input.N {
+                    if self.id_map[i][j] == INVALID_ID {
+                        remain_points.push_back((i, j));
+                    }
+                }
+            }
+            // ランダムに並び変える
+            let mut rng = rand_pcg::Pcg64Mcg::new(890482);
+            remain_points.make_contiguous().shuffle(&mut rng);
+
+            while let Some((i, j)) = remain_points.pop_front() {
+                let mut has_connected = false;
+                for dir in 0..4_usize {
+                    let (di, dj) = DIJ[dir];
+                    let (ni, nj) = (i + di, j + dj);
+                    if ni >= input.N || nj >= input.N {
+                        continue;
+                    }
+                    if self.id_map[ni][nj] == INVALID_ID {
+                        continue;
+                    }
+                    if (di == 0 && input.v[i][min(j, nj)] == '0')
+                        || (dj == 0 && input.h[min(i, ni)][j] == '0')
+                    {
+                        self.id_map[i][j] = self.id_map[ni][nj];
+                        has_connected = true;
+                        break;
+                    } else {
+                        continue;
+                    }
+                }
+                if !has_connected {
+                    remain_points.push_back((i, j));
+                }
+            }
+        }
+
+        pub fn debug_id_map(&self) {
+            eprintln!("★★★id_map★★★");
+            for i in 0..self.id_map.len() {
+                for j in 0..self.id_map.len() {
+                    eprint!("{} ", self.id_map[i][j]);
+                }
+                eprintln!();
+            }
+        }
+    }
 
     pub fn compute_d_ranking(input: &Input) -> Vec<(i64, (usize, usize))> {
         let mut d_ranking = vec![];
