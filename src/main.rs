@@ -101,43 +101,6 @@ impl Sim {
             );
             //areas.debug_id_map();
         } else if solve == "4" {
-            let mut output_temp = Output::new();
-            let mut crearness_max = std::i64::MIN;
-
-            let mut acts_map = BTreeMap::new();
-            for t in 0..100000 {
-                let mut areas = solver::Areas::new(self.input.N);
-                areas.create_random_areas(&self.input, &mut rng);
-
-                // if t == 12 {
-                //     areas.debug_id_map();
-                // }
-                //areas.debug_id_map();
-
-                areas.compute_d(&self.input);
-                let mut current_day = 0;
-                let mut current_pos = (0, 0);
-                let max_clean_cnt = 10;
-                areas.clean(
-                    &self.input,
-                    current_pos,
-                    &mut current_day,
-                    &mut output_temp,
-                    max_clean_cnt,
-                    &mut acts_map,
-                );
-
-                if output_temp.out.len() >= 100000 {
-                    continue;
-                }
-                let crearness = solver::compute_clearness(&self.input, &output_temp);
-
-                if crearness_max < crearness {
-                    eprintln!("{:?} ", crearness);
-                    crearness_max = crearness;
-                    output = output_temp.clone();
-                }
-            }
         }
 
         output.submit();
@@ -407,7 +370,7 @@ mod solver {
             a_ranking.sort();
             a_ranking.reverse();
 
-            let cnt_max = a_ranking.len() / 2;
+            let cnt_max = a_ranking.len() / 3;
             let mut cnt = 0;
             let mut pos_set = BTreeSet::new();
             for &(a, (i, j)) in a_ranking.iter() {
@@ -671,81 +634,6 @@ mod solver {
                         break;
                     }
                 }
-            }
-        }
-
-        pub fn create_random_areas(&mut self, input: &Input, rng: &mut Mcg128Xsl64) {
-            for i in 0..input.N {
-                for j in 0..input.N {
-                    self.id_map[i][j] = FIRST_ID;
-                }
-            }
-
-            let mut id = FIRST_ID + 1;
-
-            let c = rng.gen_range(1, input.N * input.N / 3);
-            let m = rng.gen_range(input.N, 2 * input.N);
-            for _ in 0..c {
-                let index_min = 0;
-                let index_max = input.N * input.N - 1;
-                let index = rng.gen_range(index_min, index_max);
-                let i_entry = index / input.N;
-                let j_entry = index % input.N;
-                let mut i = i_entry;
-                let mut j = j_entry;
-                self.id_map[i][j] = id;
-
-                let mut area = Area::new(id, (i_entry, j_entry), m, input.N);
-                area.points.insert((i, j));
-
-                let mut cnt = 0;
-                let mut cnt_failed = 0;
-                while cnt < m {
-                    if cnt_failed > 20 {
-                        break;
-                    }
-                    let dir = rng.gen_range(0, 4);
-                    let (di, dj) = DIJ[dir];
-                    let (ni, nj) = (i + di, j + dj);
-                    if ni >= input.N || nj >= input.N {
-                        cnt_failed += 1;
-                        continue;
-                    }
-                    if self.id_map[ni][nj] != FIRST_ID {
-                        cnt_failed += 1;
-                        continue;
-                    }
-                    if (di == 0 && input.v[i][min(j, nj)] == '0')
-                        || (dj == 0 && input.h[min(i, ni)][j] == '0')
-                    {
-                        self.id_map[ni][nj] = id;
-                        i = ni;
-                        j = nj;
-                        area.points.insert((i, j));
-                        cnt += 1;
-                    } else {
-                        cnt_failed += 1;
-                        continue;
-                    }
-                }
-                id += 1;
-                self.areas.push(area);
-
-                let mut others = vec![];
-                for i in 0..input.N {
-                    for j in 0..input.N {
-                        if self.id_map[i][j] == FIRST_ID {
-                            others.push((i, j));
-                        }
-                    }
-                }
-                let entry = rng.gen_range(0, others.len());
-                let (i_entry, j_entry) = others[entry];
-                let mut area = Area::new(FIRST_ID, (i_entry, j_entry), m, input.N);
-                for (i, j) in others.iter() {
-                    area.points.insert((*i, *j));
-                }
-                self.areas.push(area);
             }
         }
 
