@@ -75,14 +75,19 @@ impl Sim {
             let start = goal;
             let goal = (0, 0);
             let path = solver::compute_path_with_bfs(&self.input, start, goal);
-            output.add_path(&path);
+            output.add(&path);
         } else if solve == "3" {
+            let start = (0, 0);
+
             let mut areas = solver::Areas::new(self.input.N);
             areas.devide(&self.input);
             areas.set_id_to_map();
             areas.connect_remain_points(&self.input);
             areas.compute_d(&self.input);
-            areas.debug_id_map();
+            let mut current_day = 0;
+            let mut current_pos = start;
+            areas.clean(&self.input, current_pos, &mut current_day, &mut output);
+            //areas.debug_id_map();
         }
 
         output.submit();
@@ -131,6 +136,7 @@ impl Sim {
 
         eprintln!("{} ", cnt);
         let best_score = score;
+        let best_score = if output.out.len() >= 100000 { 0 } else { score };
         eprintln!("{} ", best_score);
         eprintln!("{} ", self.input.N);
     }
@@ -202,9 +208,9 @@ impl Output {
         Output { out: vec![] }
     }
 
-    fn add_path(&mut self, path: &Vec<char>) {
-        for &c in path.iter() {
-            self.out.push(c);
+    fn add(&mut self, actions: &Vec<char>) {
+        for &act in actions.iter() {
+            self.out.push(act);
         }
     }
 
@@ -232,10 +238,12 @@ mod solver {
         d_max: i64,
         d_min: i64,
         d_sum: i64,
+        prev_day: usize, // 前回掃除した日
+        N: usize,
     }
 
     impl Area {
-        pub fn new(id: usize, center: (usize, usize), length: usize) -> Self {
+        pub fn new(id: usize, center: (usize, usize), length: usize, N: usize) -> Self {
             let mut points = BTreeSet::new();
             points.insert(center);
             Area {
@@ -247,6 +255,8 @@ mod solver {
                 d_max: std::i64::MIN,
                 d_min: std::i64::MAX,
                 d_sum: 0,
+                prev_day: 0,
+                N,
             }
         }
 
@@ -302,6 +312,91 @@ mod solver {
             }
             self.d_ave = self.d_sum / self.points.len() as i64;
         }
+
+        pub fn get_area_a(&self, current_day: usize) -> i64 {
+            let diff = (current_day - self.prev_day) as i64;
+            let area_a = self.d_ave * diff;
+            area_a
+        }
+
+        pub fn clean(
+            &mut self,
+            input: &Input,
+            current_day: &mut usize,
+            last_pos: &mut (usize, usize),
+        ) -> Vec<char> {
+            let mut has_seen = BTreeSet::new();
+            let mut actions = Vec::<char>::new();
+            let pre_act = 'X';
+            self.dfs(
+                input,
+                pre_act,
+                self.center,
+                &mut has_seen,
+                &mut actions,
+                last_pos,
+            );
+            *current_day += actions.len();
+            self.prev_day = *current_day;
+            actions
+        }
+
+        fn dfs(
+            &self,
+            input: &Input,
+            pre_act: char,
+            current_pos: (usize, usize),
+            has_seen: &mut BTreeSet<(usize, usize)>,
+            actions: &mut Vec<char>,
+            last_pos: &mut (usize, usize),
+        ) {
+            has_seen.insert(current_pos);
+            if has_seen.len() == self.points.len() {
+                *last_pos = current_pos;
+                return;
+            }
+
+            let mut dir_ids = vec![];
+            match pre_act {
+                'R' => dir_ids = vec![1, 0, 3],
+                'D' => dir_ids = vec![2, 1, 0],
+                'L' => dir_ids = vec![3, 2, 1],
+                'U' => dir_ids = vec![0, 3, 2],
+                _ => dir_ids = vec![0, 1, 2, 3],
+            };
+
+            for dir in dir_ids {
+                //for dir in 0..4_usize {
+                let (di, dj) = DIJ[dir];
+                let (ni, nj) = (current_pos.0 + di, current_pos.1 + dj);
+                if ni >= self.N || nj >= self.N {
+                    continue;
+                }
+
+                if has_seen.contains(&(ni, nj)) {
+                    continue;
+                }
+                if !self.points.contains(&(ni, nj)) {
+                    continue;
+                }
+
+                let act = DIR.chars().nth(dir).unwrap();
+                if (di == 0 && input.v[current_pos.0][min(current_pos.1, nj)] == '0')
+                    || (dj == 0 && input.h[min(current_pos.0, ni)][current_pos.1] == '0')
+                {
+                    actions.push(act);
+                } else {
+                    continue;
+                }
+
+                self.dfs(input, act, (ni, nj), has_seen, actions, last_pos);
+                if has_seen.len() == self.points.len() {
+                    return;
+                }
+                let c = DIR.chars().nth((dir + 2) % 4).unwrap();
+                actions.push(c);
+            }
+        }
     }
 
     #[derive(Clone, Debug)]
@@ -310,7 +405,7 @@ mod solver {
         id_map: Vec<Vec<usize>>,
     }
 
-    const INVALID_ID: usize = 0;
+    const INVALID_ID: usize = std::usize::MAX;
     impl Areas {
         pub fn new(N: usize) -> Self {
             let id_map = vec![vec![INVALID_ID; N]; N];
@@ -321,15 +416,15 @@ mod solver {
         }
 
         pub fn devide(&mut self, input: &Input) {
-            const LENGTH: usize = 5; // 奇数にする
-            let groups = input.N / LENGTH;
+            let length: usize = 3 * input.N / 10; // 幅
+            let groups = input.N / length;
 
-            const FIRST_ID: usize = 1;
+            const FIRST_ID: usize = 0;
             let mut id = FIRST_ID;
             for i in 0..groups {
                 for j in 0..groups {
-                    let center = (i * LENGTH + LENGTH / 2, j * LENGTH + LENGTH / 2);
-                    let mut area = Area::new(id, center, LENGTH);
+                    let center = (i * length + length / 2, j * length + length / 2);
+                    let mut area = Area::new(id, center, length, input.N);
                     area.identify_same_area(input);
                     self.areas.push(area);
                     id += 1;
@@ -407,6 +502,78 @@ mod solver {
             }
         }
 
+        pub fn clean(
+            &mut self,
+            input: &Input,
+            mut current_pos: (usize, usize),
+            current_day: &mut usize,
+            output: &mut Output,
+        ) {
+            let first_current_pos = current_pos;
+
+            let mut remains = BTreeSet::new();
+            for area in self.areas.iter_mut() {
+                remains.insert(area.id);
+            }
+
+            for _ in 0..10000 {
+                if output.out.len() >= (100000 - (remains.len() + 2) * input.N * input.N) {
+                    //eprintln!("{:?} ", output.out.len());
+                    break;
+                }
+
+                let mut max_area_a = std::i64::MIN;
+                let mut max_area_ave_d = std::i64::MIN;
+                let mut max_area_id = INVALID_ID;
+                for (index, area) in self.areas.iter().enumerate() {
+                    let ave_d = area.d_ave;
+                    let area_a = area.get_area_a(*current_day);
+                    if max_area_a < area_a {
+                        max_area_id = index;
+                        max_area_a = area_a;
+                        max_area_ave_d = ave_d;
+                    } else if max_area_a == area_a {
+                        if ave_d > max_area_ave_d {
+                            max_area_id = index;
+                            max_area_a = area_a;
+                            max_area_ave_d = ave_d;
+                        }
+                    }
+                }
+                let area = &mut self.areas[max_area_id];
+                let start = current_pos;
+                let goal = area.center;
+                let act = compute_path_with_bfs(input, start, goal);
+                output.add(&act);
+                current_pos = goal;
+                let act = area.clean(input, current_day, &mut current_pos);
+                output.add(&act);
+
+                remains.remove(&max_area_id);
+            }
+
+            for index in remains.iter() {
+                let area = &mut self.areas[*index];
+                let start = current_pos;
+                let goal = area.center;
+                let act = compute_path_with_bfs(input, start, goal);
+                output.add(&act);
+                current_pos = goal;
+                let act = area.clean(input, current_day, &mut current_pos);
+                output.add(&act);
+            }
+
+            let start = current_pos;
+            let goal = first_current_pos;
+            let act = compute_path_with_bfs(input, start, goal);
+            output.add(&act);
+
+            let start = goal;
+            let goal = (0, 0);
+            let act = compute_path_with_bfs(input, start, goal);
+            output.add(&act);
+        }
+
         pub fn debug_id_map(&self) {
             eprintln!("★★★id_map★★★");
             for i in 0..self.id_map.len() {
@@ -416,13 +583,17 @@ mod solver {
                 eprintln!();
             }
 
-            eprintln!("★★★area★★★");
-            for area in self.areas.iter() {
-                eprintln!(
-                    "id: {}, center: {:?}, d_ave: {}, d_sum: {}, d_min: {}, d_max: {}",
-                    area.id, area.center, area.d_ave, area.d_sum, area.d_min, area.d_max
-                );
-            }
+            // eprintln!("★★★area★★★");
+            // for area in self.areas.iter() {
+            //     if area.id != 6 {
+            //         continue;
+            //     }
+            //     eprintln!(
+            //         "id: {}, center: {:?}, d_ave: {}, d_sum: {}, d_min: {}, d_max: {}",
+            //         area.id, area.center, area.d_ave, area.d_sum, area.d_min, area.d_max
+            //     );
+            //     eprintln!("{:?} ", area.points);
+            // }
         }
     }
 
@@ -511,6 +682,7 @@ mod solver {
             goal_point: &mut (usize, usize),
         ) {
             has_seen[i][j] = true;
+
             for dir in 0..4_usize {
                 let (di, dj) = DIJ[dir];
                 let (ni, nj) = (i + di, j + dj);
