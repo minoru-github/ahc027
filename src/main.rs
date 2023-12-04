@@ -16,7 +16,7 @@ use std::{
     slice::SliceIndex,
 };
 
-use crate::solver::SimpleDfs;
+use crate::{solver::SimpleDfs, Tools::compute_score};
 
 fn main() {
     let start_time = my_lib::time::update();
@@ -61,6 +61,9 @@ impl Sim {
     }
 
     pub fn run(&mut self) {
+        let mut rng: Mcg128Xsl64 = rand_pcg::Pcg64Mcg::new(890482);
+        let mut cnt = 0 as usize; // 試行回数
+
         let mut output: Output = Output::new();
 
         let solve = "3";
@@ -86,16 +89,60 @@ impl Sim {
             areas.compute_d(&self.input);
             let mut current_day = 0;
             let mut current_pos = start;
-            areas.clean(&self.input, current_pos, &mut current_day, &mut output);
+            let max_clean_cnt = 100000;
+            let mut acts_map = BTreeMap::new();
+            areas.clean(
+                &self.input,
+                current_pos,
+                &mut current_day,
+                &mut output,
+                max_clean_cnt,
+                &mut acts_map,
+            );
             //areas.debug_id_map();
+        } else if solve == "4" {
+            let mut output_temp = Output::new();
+            let mut crearness_max = std::i64::MIN;
+
+            let mut acts_map = BTreeMap::new();
+            for t in 0..100000 {
+                let mut areas = solver::Areas::new(self.input.N);
+                areas.create_random_areas(&self.input, &mut rng);
+
+                // if t == 12 {
+                //     areas.debug_id_map();
+                // }
+                //areas.debug_id_map();
+
+                areas.compute_d(&self.input);
+                let mut current_day = 0;
+                let mut current_pos = (0, 0);
+                let max_clean_cnt = 10;
+                areas.clean(
+                    &self.input,
+                    current_pos,
+                    &mut current_day,
+                    &mut output_temp,
+                    max_clean_cnt,
+                    &mut acts_map,
+                );
+
+                if output_temp.out.len() >= 100000 {
+                    continue;
+                }
+                let crearness = solver::compute_clearness(&self.input, &output_temp);
+
+                if crearness_max < crearness {
+                    eprintln!("{:?} ", crearness);
+                    crearness_max = crearness;
+                    output = output_temp.clone();
+                }
+            }
         }
 
         output.submit();
 
         let (score, _) = Tools::compute_score(&self.input, &output);
-
-        let mut rng: Mcg128Xsl64 = rand_pcg::Pcg64Mcg::new(890482);
-        let mut cnt = 0 as usize; // 試行回数
 
         // //let mut initial_state = State::new();
         // let mut best_output = Output::new();
@@ -135,8 +182,11 @@ impl Sim {
         //best_output.submit();
 
         eprintln!("{} ", cnt);
-        let best_score = score;
-        let best_score = if output.out.len() >= 100000 { 0 } else { score };
+        let best_score = if output.out.len() >= 100000 {
+            -1
+        } else {
+            score
+        };
         eprintln!("{} ", best_score);
         eprintln!("{} ", self.input.N);
     }
@@ -228,6 +278,21 @@ mod solver {
 
     use super::*;
 
+    pub fn compute_clearness(input: &Input, output: &Output) -> i64 {
+        let mut clearness = 0;
+        let mut pos = (0, 0);
+        for &c in output.out.iter() {
+            match c {
+                'R' => pos.1 += 1,
+                'L' => pos.1 -= 1,
+                'D' => pos.0 += 1,
+                'U' => pos.0 -= 1,
+                _ => unreachable!(),
+            }
+            clearness += input.d[pos.0][pos.1];
+        }
+        clearness
+    }
     #[derive(Clone, Debug)]
     pub struct Area {
         id: usize,
@@ -319,6 +384,118 @@ mod solver {
             area_a
         }
 
+        pub fn clean_large_a(
+            &mut self,
+            input: &Input,
+            current_day: &mut usize,
+            last_pos: &mut (usize, usize),
+            acts_map: &mut BTreeMap<((usize, usize), (usize, usize)), Vec<char>>,
+            output: &mut Output,
+            prev_day: &mut Vec<Vec<usize>>,
+        ) {
+            let entry_pos = *last_pos;
+
+            // areaのaの高い順にソート
+            let mut a_ranking = vec![];
+            for (index, area) in self.points.iter().enumerate() {
+                let (i, j) = *area;
+                let diff = (*current_day - prev_day[i][j]) as i64;
+                let d = input.d[i][j];
+                let a = d * diff;
+                a_ranking.push((a, (i, j)));
+            }
+            a_ranking.sort();
+            a_ranking.reverse();
+
+            let cnt_max = a_ranking.len() / 2;
+            let mut cnt = 0;
+            let mut pos_set = BTreeSet::new();
+            for &(a, (i, j)) in a_ranking.iter() {
+                cnt += 1;
+
+                pos_set.insert((i, j));
+
+                if input.d[i][j] == 0 {
+                    break;
+                }
+
+                if input.d[i][j] < 200 && cnt >= cnt_max {
+                    break;
+                }
+            }
+
+            // entry_posから近い点に移動。その点からさらに近い点に移動。を繰り返す
+            let mut pos_vec = vec![];
+            let mut i = entry_pos.0;
+            let mut j = entry_pos.1;
+            while pos_set.len() > 0 {
+                let mut dist_min = std::i64::MAX;
+                let mut pos_min = (std::usize::MAX, std::usize::MAX);
+                for &(ni, nj) in pos_set.iter() {
+                    let dist = (ni as i64 - i as i64).abs() + (nj as i64 - j as i64).abs();
+                    if dist < dist_min {
+                        pos_min = (ni, nj);
+                        dist_min = dist;
+                    }
+                }
+                pos_vec.push(pos_min);
+                pos_set.remove(&pos_min);
+                i = pos_min.0;
+                j = pos_min.1;
+            }
+
+            let mut actions = Vec::<char>::new();
+            for &(i, j) in pos_vec.iter() {
+                let start = *last_pos;
+                let goal = (i, j);
+                if start == goal {
+                    continue;
+                }
+                let from_to = (start, goal);
+                if let Some(act) = acts_map.get(&from_to) {
+                    for &c in act.iter() {
+                        actions.push(c);
+                    }
+                } else {
+                    let act = compute_path_with_bfs(input, start, goal);
+                    for &c in act.iter() {
+                        actions.push(c);
+                    }
+                    acts_map.insert(from_to, act.clone());
+                }
+
+                *last_pos = goal;
+            }
+            // 通過した点のprev_dayを更新
+            self.regist_prev_day(entry_pos, &actions, current_day, prev_day);
+
+            output.add(&actions);
+
+            self.prev_day = *current_day;
+        }
+
+        pub fn regist_prev_day(
+            &mut self,
+            entry_pos: (usize, usize),
+            actions: &Vec<char>,
+            current_day: &mut usize,
+            prev_day: &mut Vec<Vec<usize>>,
+        ) {
+            let mut pos = entry_pos;
+            prev_day[pos.0][pos.1] = *current_day;
+            for act in actions.iter() {
+                match act {
+                    'R' => pos.1 += 1,
+                    'L' => pos.1 -= 1,
+                    'D' => pos.0 += 1,
+                    'U' => pos.0 -= 1,
+                    _ => unreachable!(),
+                }
+                *current_day += 1;
+                prev_day[pos.0][pos.1] = *current_day;
+            }
+        }
+
         pub fn clean(
             &mut self,
             input: &Input,
@@ -406,6 +583,8 @@ mod solver {
     }
 
     const INVALID_ID: usize = std::usize::MAX;
+    const FIRST_ID: usize = 0;
+
     impl Areas {
         pub fn new(N: usize) -> Self {
             let id_map = vec![vec![INVALID_ID; N]; N];
@@ -419,7 +598,6 @@ mod solver {
             let length: usize = 3 * input.N / 10; // 幅
             let groups = input.N / length;
 
-            const FIRST_ID: usize = 0;
             let mut id = FIRST_ID;
             for i in 0..groups {
                 for j in 0..groups {
@@ -496,6 +674,81 @@ mod solver {
             }
         }
 
+        pub fn create_random_areas(&mut self, input: &Input, rng: &mut Mcg128Xsl64) {
+            for i in 0..input.N {
+                for j in 0..input.N {
+                    self.id_map[i][j] = FIRST_ID;
+                }
+            }
+
+            let mut id = FIRST_ID + 1;
+
+            let c = rng.gen_range(1, input.N * input.N / 3);
+            let m = rng.gen_range(input.N, 2 * input.N);
+            for _ in 0..c {
+                let index_min = 0;
+                let index_max = input.N * input.N - 1;
+                let index = rng.gen_range(index_min, index_max);
+                let i_entry = index / input.N;
+                let j_entry = index % input.N;
+                let mut i = i_entry;
+                let mut j = j_entry;
+                self.id_map[i][j] = id;
+
+                let mut area = Area::new(id, (i_entry, j_entry), m, input.N);
+                area.points.insert((i, j));
+
+                let mut cnt = 0;
+                let mut cnt_failed = 0;
+                while cnt < m {
+                    if cnt_failed > 20 {
+                        break;
+                    }
+                    let dir = rng.gen_range(0, 4);
+                    let (di, dj) = DIJ[dir];
+                    let (ni, nj) = (i + di, j + dj);
+                    if ni >= input.N || nj >= input.N {
+                        cnt_failed += 1;
+                        continue;
+                    }
+                    if self.id_map[ni][nj] != FIRST_ID {
+                        cnt_failed += 1;
+                        continue;
+                    }
+                    if (di == 0 && input.v[i][min(j, nj)] == '0')
+                        || (dj == 0 && input.h[min(i, ni)][j] == '0')
+                    {
+                        self.id_map[ni][nj] = id;
+                        i = ni;
+                        j = nj;
+                        area.points.insert((i, j));
+                        cnt += 1;
+                    } else {
+                        cnt_failed += 1;
+                        continue;
+                    }
+                }
+                id += 1;
+                self.areas.push(area);
+
+                let mut others = vec![];
+                for i in 0..input.N {
+                    for j in 0..input.N {
+                        if self.id_map[i][j] == FIRST_ID {
+                            others.push((i, j));
+                        }
+                    }
+                }
+                let entry = rng.gen_range(0, others.len());
+                let (i_entry, j_entry) = others[entry];
+                let mut area = Area::new(FIRST_ID, (i_entry, j_entry), m, input.N);
+                for (i, j) in others.iter() {
+                    area.points.insert((*i, *j));
+                }
+                self.areas.push(area);
+            }
+        }
+
         pub fn compute_d(&mut self, input: &Input) {
             for area in self.areas.iter_mut() {
                 area.compute_d(input);
@@ -508,6 +761,8 @@ mod solver {
             mut current_pos: (usize, usize),
             current_day: &mut usize,
             output: &mut Output,
+            max_clean_cnt: usize,
+            acts_map: &mut BTreeMap<((usize, usize), (usize, usize)), Vec<char>>,
         ) {
             let first_current_pos = current_pos;
 
@@ -516,7 +771,9 @@ mod solver {
                 remains.insert(area.id);
             }
 
-            for _ in 0..10000 {
+            let mut prev_day = vec![vec![0; input.N]; input.N];
+
+            for _ in 0..max_clean_cnt {
                 if output.out.len() >= (100000 - (remains.len() + 2) * input.N * input.N) {
                     //eprintln!("{:?} ", output.out.len());
                     break;
@@ -543,11 +800,25 @@ mod solver {
                 let area = &mut self.areas[max_area_id];
                 let start = current_pos;
                 let goal = area.center;
-                let act = compute_path_with_bfs(input, start, goal);
-                output.add(&act);
+                let from_to = (start, goal);
+                if let Some(act) = acts_map.get(&from_to) {
+                    output.add(act);
+                } else {
+                    let act = compute_path_with_bfs(input, start, goal);
+                    acts_map.insert(from_to, act.clone());
+                    output.add(&act);
+                }
+
                 current_pos = goal;
-                let act = area.clean(input, current_day, &mut current_pos);
-                output.add(&act);
+                //let act = area.clean(input, current_day, &mut current_pos);
+                area.clean_large_a(
+                    input,
+                    current_day,
+                    &mut current_pos,
+                    acts_map,
+                    output,
+                    &mut prev_day,
+                );
 
                 remains.remove(&max_area_id);
             }
@@ -583,17 +854,14 @@ mod solver {
                 eprintln!();
             }
 
-            // eprintln!("★★★area★★★");
-            // for area in self.areas.iter() {
-            //     if area.id != 6 {
-            //         continue;
-            //     }
-            //     eprintln!(
-            //         "id: {}, center: {:?}, d_ave: {}, d_sum: {}, d_min: {}, d_max: {}",
-            //         area.id, area.center, area.d_ave, area.d_sum, area.d_min, area.d_max
-            //     );
-            //     eprintln!("{:?} ", area.points);
-            // }
+            eprintln!("★★★area★★★");
+            for area in self.areas.iter() {
+                eprintln!(
+                    "id: {}, center: {:?}, d_ave: {}, d_sum: {}, d_min: {}, d_max: {}, points_len: {}",
+                    area.id, area.center, area.d_ave, area.d_sum, area.d_min, area.d_max, area.points.len()
+                );
+                //eprintln!("{:?} ", area.points);
+            }
         }
     }
 
