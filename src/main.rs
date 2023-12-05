@@ -78,7 +78,7 @@ impl Sim {
             let mut solve = solver::CleanAroundHighA::new(self.input.N);
             let mut current_day = 0;
             let mut current_pos = start;
-            let max_clean_cnt = self.input.N * 4;
+            let max_clean_cnt = self.input.N * self.input.N;
             let mut acts_map = BTreeMap::new();
             solve.run(
                 &self.input,
@@ -247,132 +247,6 @@ mod solver {
         }
         clearness
     }
-    #[derive(Clone, Debug)]
-    pub struct Area {
-        id: usize,
-        center: (usize, usize),
-        points: BTreeSet<(usize, usize)>,
-        length: usize,
-        d_ave: i64,
-        d_max: i64,
-        d_min: i64,
-        d_sum: i64,
-        prev_day: usize, // 前回掃除した日
-        N: usize,
-    }
-
-    impl Area {
-        pub fn new(id: usize, center: (usize, usize), length: usize, N: usize) -> Self {
-            let mut points = BTreeSet::new();
-            points.insert(center);
-            Area {
-                id,
-                center,
-                points,
-                length,
-                d_ave: 0,
-                d_max: std::i64::MIN,
-                d_min: std::i64::MAX,
-                d_sum: 0,
-                prev_day: 0,
-                N,
-            }
-        }
-
-        pub fn compute_d(&mut self, input: &Input) {
-            for (i, j) in self.points.iter() {
-                self.d_sum += input.d[*i][*j];
-                self.d_max = self.d_max.max(input.d[*i][*j]);
-                self.d_min = self.d_min.min(input.d[*i][*j]);
-            }
-            self.d_ave = self.d_sum / self.points.len() as i64;
-        }
-
-        pub fn get_area_a(&self, current_day: usize) -> i64 {
-            let diff = (current_day - self.prev_day) as i64;
-            let area_a = self.d_ave * diff;
-            area_a
-        }
-
-        pub fn clean(
-            &mut self,
-            input: &Input,
-            current_day: &mut usize,
-            last_pos: &mut (usize, usize),
-        ) -> Vec<char> {
-            let mut has_seen = BTreeSet::new();
-            let mut actions = Vec::<char>::new();
-            let pre_act = 'X';
-            self.dfs(
-                input,
-                pre_act,
-                self.center,
-                &mut has_seen,
-                &mut actions,
-                last_pos,
-            );
-            *current_day += actions.len();
-            self.prev_day = *current_day;
-            actions
-        }
-
-        fn dfs(
-            &self,
-            input: &Input,
-            pre_act: char,
-            current_pos: (usize, usize),
-            has_seen: &mut BTreeSet<(usize, usize)>,
-            actions: &mut Vec<char>,
-            last_pos: &mut (usize, usize),
-        ) {
-            has_seen.insert(current_pos);
-            if has_seen.len() == self.points.len() {
-                *last_pos = current_pos;
-                return;
-            }
-
-            let mut dir_ids = vec![];
-            match pre_act {
-                'R' => dir_ids = vec![1, 0, 3],
-                'D' => dir_ids = vec![2, 1, 0],
-                'L' => dir_ids = vec![3, 2, 1],
-                'U' => dir_ids = vec![0, 3, 2],
-                _ => dir_ids = vec![0, 1, 2, 3],
-            };
-
-            for dir in dir_ids {
-                //for dir in 0..4_usize {
-                let (di, dj) = DIJ[dir];
-                let (ni, nj) = (current_pos.0 + di, current_pos.1 + dj);
-                if ni >= self.N || nj >= self.N {
-                    continue;
-                }
-
-                if has_seen.contains(&(ni, nj)) {
-                    continue;
-                }
-                if !self.points.contains(&(ni, nj)) {
-                    continue;
-                }
-
-                let act = DIR.chars().nth(dir).unwrap();
-                if (di == 0 && input.v[current_pos.0][min(current_pos.1, nj)] == '0')
-                    || (dj == 0 && input.h[min(current_pos.0, ni)][current_pos.1] == '0')
-                {
-                    actions.push(act);
-                } else {
-                    continue;
-                }
-
-                self.dfs(input, act, (ni, nj), has_seen, actions, last_pos);
-                if has_seen.len() == self.points.len() {
-                    return;
-                }
-                let c = DIR.chars().nth((dir + 2) % 4).unwrap();
-                actions.push(c);
-            }
-        }
-    }
 
     pub fn clean_large_a(
         input: &Input,
@@ -389,7 +263,8 @@ mod solver {
         let mut a_ranking = vec![];
         for i in 0..input.N {
             for j in 0..input.N {
-                let diff = (*current_day - prev_day[i][j]) as i64;
+                // 初回で全てa = 0になってしまうので+1しておく
+                let diff = (*current_day - prev_day[i][j] + 1) as i64;
                 let d = input.d[i][j];
                 let a = d * diff;
                 a_ranking.push((a, (i, j)));
@@ -398,7 +273,9 @@ mod solver {
         a_ranking.sort();
         a_ranking.reverse();
 
-        let cnt_max = a_ranking.len() / 3;
+        let high_a = a_ranking[0].0;
+
+        let cnt_max = a_ranking.len() / 5;
         let mut cnt = 0;
         let mut pos_set = BTreeSet::new();
         for &(a, (i, j)) in a_ranking.iter() {
@@ -410,7 +287,7 @@ mod solver {
                 break;
             }
 
-            if input.d[i][j] < 200 && cnt >= cnt_max {
+            if input.d[i][j] < 50 && a < high_a / 4 && cnt >= cnt_max {
                 break;
             }
         }
@@ -467,7 +344,7 @@ mod solver {
 
             let mut prev_day = vec![vec![0; input.N]; input.N];
 
-            for _ in 0..max_clean_cnt {
+            for cnt in 0..max_clean_cnt {
                 if output.out.len() >= (100000 - (remains.len() + 2) * input.N * input.N) {
                     //eprintln!("{:?} ", output.out.len());
                     break;
@@ -640,71 +517,6 @@ mod solver {
                     let c = DIR.chars().nth(dir).unwrap();
                     output.out.push(c);
                     self.dfs((ni, nj), has_seen, output);
-                    let c = DIR.chars().nth((dir + 2) % 4).unwrap();
-                    output.out.push(c);
-                }
-            }
-        }
-    }
-
-    pub struct DfsUntilWholeCleaning {
-        input: Input,
-    }
-
-    impl DfsUntilWholeCleaning {
-        pub fn new(input: Input) -> Self {
-            DfsUntilWholeCleaning { input }
-        }
-
-        pub fn run(self, output: &mut Output, start: (usize, usize)) -> (usize, usize) {
-            let mut has_seen = vec![vec![false; self.input.N]; self.input.N];
-            let mut has_seen_cnt = 0;
-            let mut goal_point = (std::usize::MAX, std::usize::MAX);
-
-            self.dfs(
-                start,
-                &mut has_seen,
-                output,
-                &mut has_seen_cnt,
-                &mut goal_point,
-            );
-
-            goal_point
-        }
-
-        fn dfs(
-            &self,
-            (i, j): (usize, usize),
-            has_seen: &mut Vec<Vec<bool>>,
-            output: &mut Output,
-            has_seen_cnt: &mut usize,
-            goal_point: &mut (usize, usize),
-        ) {
-            has_seen[i][j] = true;
-
-            for dir in 0..4_usize {
-                let (di, dj) = DIJ[dir];
-                let (ni, nj) = (i + di, j + dj);
-                if ni >= self.input.N || nj >= self.input.N {
-                    continue;
-                }
-                if has_seen[ni][nj] {
-                    continue;
-                }
-                if (di == 0 && self.input.v[i][min(j, nj)] == '0')
-                    || (dj == 0 && self.input.h[min(i, ni)][j] == '0')
-                {
-                    let c = DIR.chars().nth(dir).unwrap();
-                    output.out.push(c);
-                    *has_seen_cnt += 1;
-                    if (*has_seen_cnt == self.input.N * self.input.N - 1) {
-                        *goal_point = (ni, nj);
-                    }
-
-                    self.dfs((ni, nj), has_seen, output, has_seen_cnt, goal_point);
-                    if (*has_seen_cnt == self.input.N * self.input.N - 1) {
-                        return;
-                    }
                     let c = DIR.chars().nth((dir + 2) % 4).unwrap();
                     output.out.push(c);
                 }
