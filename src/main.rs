@@ -239,6 +239,8 @@ impl Output {
 mod solver {
     use std::vec;
 
+    use rand::seq::index;
+
     use super::*;
 
     pub fn compute_clearness(input: &Input, output: &Output) -> i64 {
@@ -355,6 +357,7 @@ mod solver {
             acts_map: &mut BTreeMap<((usize, usize), (usize, usize)), Vec<char>>,
             output: &mut Output,
             prev_day: &mut Vec<Vec<usize>>,
+            remains: &mut BTreeSet<(usize, usize)>,
         ) {
             let entry_pos = *last_pos;
 
@@ -388,64 +391,24 @@ mod solver {
             }
 
             // entry_posから近い点に移動。その点からさらに近い点に移動。を繰り返す
-            let mut pos_vec = vec![];
-            let mut i = entry_pos.0;
-            let mut j = entry_pos.1;
-            while pos_set.len() > 0 {
-                let mut dist_min = std::i64::MAX;
-                let mut pos_min = (std::usize::MAX, std::usize::MAX);
-                for &(ni, nj) in pos_set.iter() {
-                    let dist = (ni as i64 - i as i64).abs() + (nj as i64 - j as i64).abs();
-                    if dist < dist_min {
-                        pos_min = (ni, nj);
-                        dist_min = dist;
-                    }
-                }
-                pos_vec.push(pos_min);
-                pos_set.remove(&pos_min);
-                i = pos_min.0;
-                j = pos_min.1;
-            }
-
-            let mut actions = Vec::<char>::new();
-            for &(i, j) in pos_vec.iter() {
-                let start = *last_pos;
-                let goal = (i, j);
-                if start == goal {
-                    continue;
-                }
-                let from_to = (start, goal);
-                if let Some(act) = acts_map.get(&from_to) {
-                    for &c in act.iter() {
-                        actions.push(c);
-                    }
-                } else {
-                    let act = compute_path_with_bfs(input, start, goal);
-                    for &c in act.iter() {
-                        actions.push(c);
-                    }
-                    acts_map.insert(from_to, act.clone());
-                }
-
-                *last_pos = goal;
-            }
+            let mut actions =
+                move_around_pos_set(input, current_day, last_pos, acts_map, &mut pos_set);
+            self.remove_remains_from_actions(entry_pos, &actions, remains);
             // 通過した点のprev_dayを更新
-            self.regist_prev_day(entry_pos, &actions, current_day, prev_day);
-
+            regist_prev_day(entry_pos, &actions, current_day, prev_day);
             output.add(&actions);
 
+            // areaとして最後に掃除した日を更新
             self.prev_day = *current_day;
         }
 
-        pub fn regist_prev_day(
-            &mut self,
+        pub fn remove_remains_from_actions(
+            &self,
             entry_pos: (usize, usize),
             actions: &Vec<char>,
-            current_day: &mut usize,
-            prev_day: &mut Vec<Vec<usize>>,
+            remains: &mut BTreeSet<(usize, usize)>,
         ) {
             let mut pos = entry_pos;
-            prev_day[pos.0][pos.1] = *current_day;
             for act in actions.iter() {
                 match act {
                     'R' => pos.1 += 1,
@@ -454,8 +417,7 @@ mod solver {
                     'U' => pos.0 -= 1,
                     _ => unreachable!(),
                 }
-                *current_day += 1;
-                prev_day[pos.0][pos.1] = *current_day;
+                remains.remove(&pos);
             }
         }
 
@@ -652,11 +614,11 @@ mod solver {
             max_clean_cnt: usize,
             acts_map: &mut BTreeMap<((usize, usize), (usize, usize)), Vec<char>>,
         ) {
-            let first_current_pos = current_pos;
-
             let mut remains = BTreeSet::new();
-            for area in self.areas.iter_mut() {
-                remains.insert(area.id);
+            for i in 0..input.N {
+                for j in 0..input.N {
+                    remains.insert((i, j));
+                }
             }
 
             let mut prev_day = vec![vec![0; input.N]; input.N];
@@ -706,28 +668,28 @@ mod solver {
                     acts_map,
                     output,
                     &mut prev_day,
+                    &mut remains,
                 );
-
-                remains.remove(&max_area_id);
             }
 
-            for index in remains.iter() {
-                let area = &mut self.areas[*index];
-                let start = current_pos;
-                let goal = area.center;
-                let act = compute_path_with_bfs(input, start, goal);
-                output.add(&act);
-                current_pos = goal;
-                let act = area.clean(input, current_day, &mut current_pos);
-                output.add(&act);
-            }
+            let entry_pos = current_pos;
+            let actions =
+                move_around_pos_set(input, current_day, &mut current_pos, acts_map, &mut remains);
+            regist_prev_day(entry_pos, &actions, current_day, &mut prev_day);
+            output.add(&actions);
+
+            // for index in remains.iter() {
+            //     let area = &mut self.areas[*index];
+            //     let start = current_pos;
+            //     let goal = area.center;
+            //     let act = compute_path_with_bfs(input, start, goal);
+            //     output.add(&act);
+            //     current_pos = goal;
+            //     let act = area.clean(input, current_day, &mut current_pos);
+            //     output.add(&act);
+            // }
 
             let start = current_pos;
-            let goal = first_current_pos;
-            let act = compute_path_with_bfs(input, start, goal);
-            output.add(&act);
-
-            let start = goal;
             let goal = (0, 0);
             let act = compute_path_with_bfs(input, start, goal);
             output.add(&act);
@@ -750,6 +712,79 @@ mod solver {
                 );
                 //eprintln!("{:?} ", area.points);
             }
+        }
+    }
+
+    pub fn move_around_pos_set(
+        input: &Input,
+        current_day: &mut usize,
+        last_pos: &mut (usize, usize),
+        acts_map: &mut BTreeMap<((usize, usize), (usize, usize)), Vec<char>>,
+        pos_set: &mut BTreeSet<(usize, usize)>,
+    ) -> Vec<char> {
+        // entry_posから近い点に移動。その点からさらに近い点に移動。を繰り返す
+        let mut pos_vec = vec![];
+        let mut i = last_pos.0;
+        let mut j = last_pos.1;
+        while pos_set.len() > 0 {
+            let mut dist_min = std::i64::MAX;
+            let mut pos_min = (std::usize::MAX, std::usize::MAX);
+            for &(ni, nj) in pos_set.iter() {
+                let dist = (ni as i64 - i as i64).abs() + (nj as i64 - j as i64).abs();
+                if dist < dist_min {
+                    pos_min = (ni, nj);
+                    dist_min = dist;
+                }
+            }
+            pos_vec.push(pos_min);
+            pos_set.remove(&pos_min);
+            i = pos_min.0;
+            j = pos_min.1;
+        }
+
+        let mut actions = Vec::<char>::new();
+        for &(i, j) in pos_vec.iter() {
+            let start = *last_pos;
+            let goal = (i, j);
+            if start == goal {
+                continue;
+            }
+            let from_to = (start, goal);
+            if let Some(act) = acts_map.get(&from_to) {
+                for &c in act.iter() {
+                    actions.push(c);
+                }
+            } else {
+                let act = compute_path_with_bfs(input, start, goal);
+                for &c in act.iter() {
+                    actions.push(c);
+                }
+                acts_map.insert(from_to, act.clone());
+            }
+
+            *last_pos = goal;
+        }
+        actions
+    }
+
+    pub fn regist_prev_day(
+        entry_pos: (usize, usize),
+        actions: &Vec<char>,
+        current_day: &mut usize,
+        prev_day: &mut Vec<Vec<usize>>,
+    ) {
+        let mut pos = entry_pos;
+        prev_day[pos.0][pos.1] = *current_day;
+        for act in actions.iter() {
+            match act {
+                'R' => pos.1 += 1,
+                'L' => pos.1 -= 1,
+                'D' => pos.0 += 1,
+                'U' => pos.0 -= 1,
+                _ => unreachable!(),
+            }
+            *current_day += 1;
+            prev_day[pos.0][pos.1] = *current_day;
         }
     }
 
