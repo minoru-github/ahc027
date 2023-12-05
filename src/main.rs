@@ -359,6 +359,31 @@ mod solver {
                     &mut prev_day,
                     &mut remains,
                 );
+
+                if cnt != 0 && cnt % 2 == 0 {
+                    let entry_pos = current_pos;
+                    let len = remains.len() / 5;
+                    let mut pos_set = BTreeSet::new();
+                    for &(i, j) in remains.iter().take(len) {
+                        let di = (i as i64 - entry_pos.0 as i64).abs();
+                        let dj = (j as i64 - entry_pos.1 as i64).abs();
+                        let dist = (di + dj) as usize;
+                        if dist > input.N {
+                            continue;
+                        }
+                        pos_set.insert((i, j));
+                    }
+                    let actions = move_around_pos_set(
+                        input,
+                        current_day,
+                        &mut current_pos,
+                        acts_map,
+                        &mut pos_set,
+                    );
+                    regist_prev_day(entry_pos, &actions, current_day, &mut prev_day);
+                    remove_remains_from_actions(entry_pos, &actions, &mut remains);
+                    output.add(&actions);
+                }
             }
 
             let entry_pos = current_pos;
