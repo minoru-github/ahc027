@@ -72,26 +72,15 @@ impl Sim {
             let start = (0, 0);
             simple_dfs.run(&mut output, start);
         } else if solve == "2" {
-            let mut dfs = solver::DfsUntilWholeCleaning::new(self.input.clone());
-            let start = (0, 0);
-            let goal = dfs.run(&mut output, start);
-            let start = goal;
-            let goal = (0, 0);
-            let path = solver::compute_path_with_bfs(&self.input, start, goal);
-            output.add(&path);
         } else if solve == "3" {
             let start = (0, 0);
 
-            let mut areas = solver::Areas::new(self.input.N);
-            areas.devide(&self.input);
-            areas.set_id_to_map();
-            //areas.connect_remain_points(&self.input);
-            areas.compute_d(&self.input);
+            let mut solve = solver::CleanAroundHighA::new(self.input.N);
             let mut current_day = 0;
             let mut current_pos = start;
             let max_clean_cnt = self.input.N * 4;
             let mut acts_map = BTreeMap::new();
-            areas.clean(
+            solve.run(
                 &self.input,
                 current_pos,
                 &mut current_day,
@@ -290,50 +279,6 @@ mod solver {
             }
         }
 
-        pub fn identify_same_area(&mut self, input: &Input) {
-            let mut q = VecDeque::new();
-            q.push_back(self.center);
-            let mut has_seen = vec![vec![false; self.length]; self.length];
-            let offset_i = self.center.0 - self.length / 2;
-            let offset_j = self.center.1 - self.length / 2;
-            let i = self.center.0;
-            let j = self.center.1;
-            has_seen[i - offset_i][j - offset_j] = true;
-            while let Some((i, j)) = q.pop_front() {
-                for dir in 0..4_usize {
-                    let (di, dj) = DIJ[dir];
-                    let (ni, nj) = (i + di, j + dj);
-                    if ni >= input.N || nj >= input.N {
-                        continue;
-                    }
-                    let dist = (ni as i64 - self.center.0 as i64).abs()
-                        + (nj as i64 - self.center.1 as i64).abs();
-                    if dist > self.length as i64 {
-                        continue;
-                    }
-                    let (ni_with_offset, nj_with_offset) =
-                        (ni as i64 - offset_i as i64, nj as i64 - offset_j as i64);
-                    if ni_with_offset < 0 || nj_with_offset < 0 {
-                        continue;
-                    }
-                    if ni_with_offset >= self.length as i64 || nj_with_offset >= self.length as i64
-                    {
-                        continue;
-                    }
-                    if has_seen[ni - offset_i][nj - offset_j] {
-                        continue;
-                    }
-                    if (di == 0 && input.v[i][min(j, nj)] == '0')
-                        || (dj == 0 && input.h[min(i, ni)][j] == '0')
-                    {
-                        q.push_back((ni, nj));
-                        has_seen[ni - offset_i][nj - offset_j] = true;
-                        self.points.insert((ni, nj));
-                    }
-                }
-            }
-        }
-
         pub fn compute_d(&mut self, input: &Input) {
             for (i, j) in self.points.iter() {
                 self.d_sum += input.d[*i][*j];
@@ -347,78 +292,6 @@ mod solver {
             let diff = (current_day - self.prev_day) as i64;
             let area_a = self.d_ave * diff;
             area_a
-        }
-
-        pub fn clean_large_a(
-            &mut self,
-            input: &Input,
-            current_day: &mut usize,
-            last_pos: &mut (usize, usize),
-            acts_map: &mut BTreeMap<((usize, usize), (usize, usize)), Vec<char>>,
-            output: &mut Output,
-            prev_day: &mut Vec<Vec<usize>>,
-            remains: &mut BTreeSet<(usize, usize)>,
-        ) {
-            let entry_pos = *last_pos;
-
-            // areaのaの高い順にソート
-            let mut a_ranking = vec![];
-            for (index, area) in self.points.iter().enumerate() {
-                let (i, j) = *area;
-                let diff = (*current_day - prev_day[i][j]) as i64;
-                let d = input.d[i][j];
-                let a = d * diff;
-                a_ranking.push((a, (i, j)));
-            }
-            a_ranking.sort();
-            a_ranking.reverse();
-
-            let cnt_max = a_ranking.len() / 3;
-            let mut cnt = 0;
-            let mut pos_set = BTreeSet::new();
-            for &(a, (i, j)) in a_ranking.iter() {
-                cnt += 1;
-
-                pos_set.insert((i, j));
-
-                if input.d[i][j] == 0 {
-                    break;
-                }
-
-                if input.d[i][j] < 200 && cnt >= cnt_max {
-                    break;
-                }
-            }
-
-            // entry_posから近い点に移動。その点からさらに近い点に移動。を繰り返す
-            let mut actions =
-                move_around_pos_set(input, current_day, last_pos, acts_map, &mut pos_set);
-            self.remove_remains_from_actions(entry_pos, &actions, remains);
-            // 通過した点のprev_dayを更新
-            regist_prev_day(entry_pos, &actions, current_day, prev_day);
-            output.add(&actions);
-
-            // areaとして最後に掃除した日を更新
-            self.prev_day = *current_day;
-        }
-
-        pub fn remove_remains_from_actions(
-            &self,
-            entry_pos: (usize, usize),
-            actions: &Vec<char>,
-            remains: &mut BTreeSet<(usize, usize)>,
-        ) {
-            let mut pos = entry_pos;
-            for act in actions.iter() {
-                match act {
-                    'R' => pos.1 += 1,
-                    'L' => pos.1 -= 1,
-                    'D' => pos.0 += 1,
-                    'U' => pos.0 -= 1,
-                    _ => unreachable!(),
-                }
-                remains.remove(&pos);
-            }
         }
 
         pub fn clean(
@@ -501,111 +374,82 @@ mod solver {
         }
     }
 
-    #[derive(Clone, Debug)]
-    pub struct Areas {
-        areas: Vec<Area>,
-        id_map: Vec<Vec<usize>>,
+    pub fn clean_large_a(
+        input: &Input,
+        current_day: &mut usize,
+        last_pos: &mut (usize, usize),
+        acts_map: &mut BTreeMap<((usize, usize), (usize, usize)), Vec<char>>,
+        output: &mut Output,
+        prev_day: &mut Vec<Vec<usize>>,
+        remains: &mut BTreeSet<(usize, usize)>,
+    ) {
+        let entry_pos = *last_pos;
+
+        // areaのaの高い順にソート
+        let mut a_ranking = vec![];
+        for i in 0..input.N {
+            for j in 0..input.N {
+                let diff = (*current_day - prev_day[i][j]) as i64;
+                let d = input.d[i][j];
+                let a = d * diff;
+                a_ranking.push((a, (i, j)));
+            }
+        }
+        a_ranking.sort();
+        a_ranking.reverse();
+
+        let cnt_max = a_ranking.len() / 3;
+        let mut cnt = 0;
+        let mut pos_set = BTreeSet::new();
+        for &(a, (i, j)) in a_ranking.iter() {
+            cnt += 1;
+
+            pos_set.insert((i, j));
+
+            if input.d[i][j] == 0 {
+                break;
+            }
+
+            if input.d[i][j] < 200 && cnt >= cnt_max {
+                break;
+            }
+        }
+
+        // entry_posから近い点に移動。その点からさらに近い点に移動。を繰り返す
+        let mut actions = move_around_pos_set(input, current_day, last_pos, acts_map, &mut pos_set);
+        remove_remains_from_actions(entry_pos, &actions, remains);
+        // 通過した点のprev_dayを更新
+        regist_prev_day(entry_pos, &actions, current_day, prev_day);
+        output.add(&actions);
     }
 
-    const INVALID_ID: usize = std::usize::MAX;
-    const FIRST_ID: usize = 0;
+    pub fn remove_remains_from_actions(
+        entry_pos: (usize, usize),
+        actions: &Vec<char>,
+        remains: &mut BTreeSet<(usize, usize)>,
+    ) {
+        let mut pos = entry_pos;
+        for act in actions.iter() {
+            match act {
+                'R' => pos.1 += 1,
+                'L' => pos.1 -= 1,
+                'D' => pos.0 += 1,
+                'U' => pos.0 -= 1,
+                _ => unreachable!(),
+            }
+            remains.remove(&pos);
+        }
+    }
 
-    impl Areas {
+    #[derive(Clone, Debug)]
+    pub struct CleanAroundHighA {}
+
+    impl CleanAroundHighA {
         pub fn new(N: usize) -> Self {
-            let id_map = vec![vec![INVALID_ID; N]; N];
-            Areas {
-                areas: vec![],
-                id_map,
-            }
+            CleanAroundHighA {}
         }
 
-        pub fn devide(&mut self, input: &Input) {
-            let length: usize = input.N; //4 * input.N / 10; // 幅
-            let groups = input.N / length;
-
-            let mut id = FIRST_ID;
-            for i in 0..groups {
-                for j in 0..groups {
-                    let center = (i * length + length / 2, j * length + length / 2);
-                    let mut area = Area::new(id, center, length, input.N);
-                    area.identify_same_area(input);
-                    self.areas.push(area);
-                    id += 1;
-                }
-            }
-        }
-
-        pub fn set_id_to_map(&mut self) {
-            for area in self.areas.iter() {
-                for (i, j) in area.points.iter() {
-                    self.id_map[*i][*j] = area.id;
-                }
-            }
-        }
-
-        pub fn connect_remain_points(&mut self, input: &Input) {
-            let mut remain_points = VecDeque::new();
-            for i in 0..input.N {
-                for j in 0..input.N {
-                    if self.id_map[i][j] == INVALID_ID {
-                        remain_points.push_back((i, j));
-                    }
-                }
-            }
-            // ランダムに並び変える
-            let mut rng = rand_pcg::Pcg64Mcg::new(890482);
-            remain_points.make_contiguous().shuffle(&mut rng);
-
-            let mut id_points_map = BTreeMap::new();
-            while let Some((i, j)) = remain_points.pop_front() {
-                let mut has_connected = false;
-                for dir in 0..4_usize {
-                    let (di, dj) = DIJ[dir];
-                    let (ni, nj) = (i + di, j + dj);
-                    if ni >= input.N || nj >= input.N {
-                        continue;
-                    }
-                    if self.id_map[ni][nj] == INVALID_ID {
-                        continue;
-                    }
-                    if (di == 0 && input.v[i][min(j, nj)] == '0')
-                        || (dj == 0 && input.h[min(i, ni)][j] == '0')
-                    {
-                        self.id_map[i][j] = self.id_map[ni][nj];
-                        id_points_map
-                            .entry(self.id_map[i][j])
-                            .or_insert_with(Vec::new)
-                            .push((i, j));
-                        has_connected = true;
-                        break;
-                    } else {
-                        continue;
-                    }
-                }
-                if !has_connected {
-                    remain_points.push_back((i, j));
-                }
-            }
-
-            for (id, points) in id_points_map.iter() {
-                for area in self.areas.iter_mut() {
-                    if area.id == *id {
-                        for (i, j) in points.iter() {
-                            area.points.insert((*i, *j));
-                        }
-                        break;
-                    }
-                }
-            }
-        }
-
-        pub fn compute_d(&mut self, input: &Input) {
-            for area in self.areas.iter_mut() {
-                area.compute_d(input);
-            }
-        }
-
-        pub fn clean(
+        pub fn run(
             &mut self,
             input: &Input,
             mut current_pos: (usize, usize),
@@ -629,39 +473,7 @@ mod solver {
                     break;
                 }
 
-                let mut max_area_a = std::i64::MIN;
-                let mut max_area_ave_d = std::i64::MIN;
-                let mut max_area_id = INVALID_ID;
-                for (index, area) in self.areas.iter().enumerate() {
-                    let ave_d = area.d_ave;
-                    let area_a = area.get_area_a(*current_day);
-                    if max_area_a < area_a {
-                        max_area_id = index;
-                        max_area_a = area_a;
-                        max_area_ave_d = ave_d;
-                    } else if max_area_a == area_a {
-                        if ave_d > max_area_ave_d {
-                            max_area_id = index;
-                            max_area_a = area_a;
-                            max_area_ave_d = ave_d;
-                        }
-                    }
-                }
-                let area = &mut self.areas[max_area_id];
-                let start = current_pos;
-                let goal = area.center;
-                let from_to = (start, goal);
-                if let Some(act) = acts_map.get(&from_to) {
-                    output.add(act);
-                } else {
-                    let act = compute_path_with_bfs(input, start, goal);
-                    acts_map.insert(from_to, act.clone());
-                    output.add(&act);
-                }
-
-                current_pos = goal;
-                //let act = area.clean(input, current_day, &mut current_pos);
-                area.clean_large_a(
+                clean_large_a(
                     input,
                     current_day,
                     &mut current_pos,
@@ -678,39 +490,14 @@ mod solver {
             regist_prev_day(entry_pos, &actions, current_day, &mut prev_day);
             output.add(&actions);
 
-            // for index in remains.iter() {
-            //     let area = &mut self.areas[*index];
-            //     let start = current_pos;
-            //     let goal = area.center;
-            //     let act = compute_path_with_bfs(input, start, goal);
-            //     output.add(&act);
-            //     current_pos = goal;
-            //     let act = area.clean(input, current_day, &mut current_pos);
-            //     output.add(&act);
-            // }
-
             let start = current_pos;
             let goal = (0, 0);
-            let act = compute_path_with_bfs(input, start, goal);
-            output.add(&act);
-        }
-
-        pub fn debug_id_map(&self) {
-            eprintln!("★★★id_map★★★");
-            for i in 0..self.id_map.len() {
-                for j in 0..self.id_map.len() {
-                    eprint!("{} ", self.id_map[i][j]);
-                }
-                eprintln!();
-            }
-
-            eprintln!("★★★area★★★");
-            for area in self.areas.iter() {
-                eprintln!(
-                    "id: {}, center: {:?}, d_ave: {}, d_sum: {}, d_min: {}, d_max: {}, points_len: {}",
-                    area.id, area.center, area.d_ave, area.d_sum, area.d_min, area.d_max, area.points.len()
-                );
-                //eprintln!("{:?} ", area.points);
+            if let Some(act) = acts_map.get(&(start, goal)) {
+                output.add(&act);
+            } else {
+                let act = compute_path_with_bfs(input, start, goal);
+                output.add(&act);
+                acts_map.insert((start, goal), act.clone());
             }
         }
     }
