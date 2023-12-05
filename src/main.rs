@@ -85,11 +85,11 @@ impl Sim {
             let mut areas = solver::Areas::new(self.input.N);
             areas.devide(&self.input);
             areas.set_id_to_map();
-            areas.connect_remain_points(&self.input);
+            //areas.connect_remain_points(&self.input);
             areas.compute_d(&self.input);
             let mut current_day = 0;
             let mut current_pos = start;
-            let max_clean_cnt = 100000;
+            let max_clean_cnt = self.input.N * 4;
             let mut acts_map = BTreeMap::new();
             areas.clean(
                 &self.input,
@@ -520,7 +520,7 @@ mod solver {
         }
 
         pub fn devide(&mut self, input: &Input) {
-            let length: usize = 3 * input.N / 10; // 幅
+            let length: usize = input.N; //4 * input.N / 10; // 幅
             let groups = input.N / length;
 
             let mut id = FIRST_ID;
@@ -722,18 +722,39 @@ mod solver {
         acts_map: &mut BTreeMap<((usize, usize), (usize, usize)), Vec<char>>,
         pos_set: &mut BTreeSet<(usize, usize)>,
     ) -> Vec<char> {
-        // entry_posから近い点に移動。その点からさらに近い点に移動。を繰り返す
+        // entry_posから近い点をbfsで探し移動。その点からさらに近い点に移動。を繰り返す
         let mut pos_vec = vec![];
         let mut i = last_pos.0;
         let mut j = last_pos.1;
         while pos_set.len() > 0 {
-            let mut dist_min = std::i64::MAX;
+            let mut q = VecDeque::new();
+            q.push_back((i, j));
+            let mut has_seen = BTreeSet::new();
+            has_seen.insert((i, j));
+            let mut dist = vec![vec![std::usize::MAX; input.N]; input.N];
+            dist[i][j] = 0;
             let mut pos_min = (std::usize::MAX, std::usize::MAX);
-            for &(ni, nj) in pos_set.iter() {
-                let dist = (ni as i64 - i as i64).abs() + (nj as i64 - j as i64).abs();
-                if dist < dist_min {
-                    pos_min = (ni, nj);
-                    dist_min = dist;
+            'x: while let Some((i, j)) = q.pop_front() {
+                for dir in 0..4_usize {
+                    let (di, dj) = DIJ[dir];
+                    let (ni, nj) = (i + di, j + dj);
+                    if ni >= input.N || nj >= input.N {
+                        continue;
+                    }
+                    if has_seen.contains(&(ni, nj)) {
+                        continue;
+                    }
+                    if (di == 0 && input.v[i][min(j, nj)] == '0')
+                        || (dj == 0 && input.h[min(i, ni)][j] == '0')
+                    {
+                        q.push_back((ni, nj));
+                        has_seen.insert((ni, nj));
+                        dist[ni][nj] = dist[i][j] + 1;
+                        if pos_set.contains(&(ni, nj)) {
+                            pos_min = (ni, nj);
+                            break 'x;
+                        }
+                    }
                 }
             }
             pos_vec.push(pos_min);
@@ -929,6 +950,10 @@ mod solver {
                         min_dist[ni][nj] = min_dist[i][j] + 1;
                         prev[ni][nj] = (i, j);
                         q.push_back((ni, nj));
+
+                        if (ni, nj) == goal {
+                            break;
+                        }
                     }
                 }
             }
