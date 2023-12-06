@@ -73,16 +73,14 @@ impl Sim {
             simple_dfs.run(&mut output, start);
         } else if solve == "2" {
         } else if solve == "3" {
-            let start = (0, 0);
-
+            let entry_pos = (0, 0);
             let mut solve = solver::CleanAroundHighA::new(self.input.N);
             let mut current_day = 0;
-            let mut current_pos = start;
-            let max_clean_cnt = self.input.N * self.input.N;
+            let max_clean_cnt = std::usize::MAX;
             let mut acts_map = BTreeMap::new();
             solve.run(
                 &self.input,
-                current_pos,
+                entry_pos,
                 &mut current_day,
                 &mut output,
                 max_clean_cnt,
@@ -318,6 +316,55 @@ mod solver {
         }
     }
 
+    pub fn decide_start_point(input: &Input) -> (usize, usize) {
+        let mut start = (0, 0);
+        let mut voted_d_map = vec![vec![0; input.N]; input.N];
+        let mut voted_cnt_map = vec![vec![0; input.N]; input.N];
+        for i in 0..input.N {
+            for j in 0..input.N {
+                voted_d_map[i][j] = input.d[i][j];
+                voted_cnt_map[i][j] += 1;
+
+                let range = [!0, 0, 1];
+                for &di in range.iter() {
+                    for &dj in range.iter() {
+                        let (ni, nj) = (i + di, j + dj);
+                        if di == 0 && dj == 0 {
+                            continue;
+                        }
+                        if ni >= input.N || nj >= input.N {
+                            continue;
+                        }
+                        if (di == 0 && input.v[i][min(j, nj)] == '0')
+                            || (dj == 0 && input.h[min(i, ni)][j] == '0')
+                        {
+                            let dist = (i as i64 - ni as i64).abs() + (j as i64 - nj as i64).abs();
+                            voted_d_map[i][j] += input.d[ni][nj] / (dist + 1);
+                            voted_cnt_map[i][j] += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut max_d = 0;
+        let mut averaged_d_map = vec![vec![0; input.N]; input.N];
+        for i in 0..input.N {
+            for j in 0..input.N {
+                if voted_cnt_map[i][j] == 0 {
+                    continue;
+                }
+                averaged_d_map[i][j] = voted_d_map[i][j] / voted_cnt_map[i][j];
+                let d = voted_d_map[i][j] / voted_cnt_map[i][j];
+                if d > max_d {
+                    max_d = d;
+                    start = (i, j);
+                }
+            }
+        }
+        start
+    }
+
     #[derive(Clone, Debug)]
     pub struct CleanAroundHighA {}
 
@@ -329,12 +376,26 @@ mod solver {
         pub fn run(
             &mut self,
             input: &Input,
-            mut current_pos: (usize, usize),
+            mut entry_pos: (usize, usize),
             current_day: &mut usize,
             output: &mut Output,
             max_clean_cnt: usize,
             acts_map: &mut BTreeMap<((usize, usize), (usize, usize)), Vec<char>>,
         ) {
+            let first_pos = solver::decide_start_point(&input);
+
+            let from = entry_pos;
+            let to = first_pos;
+            if let Some(act) = acts_map.get(&(from, to)) {
+                output.add(&act);
+            } else {
+                let act = compute_path_with_bfs(input, from, to);
+                output.add(&act);
+                acts_map.insert((from, to), act.clone());
+            }
+
+            let mut current_pos: (usize, usize) = to;
+
             let mut remains = BTreeSet::new();
             for i in 0..input.N {
                 for j in 0..input.N {
