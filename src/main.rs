@@ -48,6 +48,8 @@ impl State {
     }
 }
 
+type DistMap = Vec<Vec<usize>>;
+
 #[derive(Debug, Clone)]
 pub struct Sim {
     input: Input,
@@ -62,86 +64,68 @@ impl Sim {
 
     pub fn run(&mut self) {
         let mut rng: Mcg128Xsl64 = rand_pcg::Pcg64Mcg::new(890482);
+
         let mut cnt = 0 as usize; // 試行回数
 
-        let mut output: Output = Output::new();
+        let mut best_score = std::i64::MAX;
+        let mut best_output = Output::new();
 
-        //solver::create_dist_maps(&self.input);
+        let dist_maps = solver::create_dist_maps(&self.input);
 
-        let solve = "3";
+        let solve = "2";
         if solve == "1" {
+            let mut output: Output = Output::new();
             let mut simple_dfs = SimpleDfs::new(self.input.clone());
             let start = (0, 0);
             simple_dfs.run(&mut output, start);
+            let (score, _) = Tools::compute_score(&self.input, &output);
+            best_score = score;
+            best_output = output.clone();
         } else if solve == "2" {
-        } else if solve == "3" {
-            let entry_pos = (0, 0);
-            let mut solve = solver::CleanAroundHighA::new(self.input.N);
-            let mut current_day = 0;
-            let max_clean_cnt = std::usize::MAX;
             let mut acts_map = BTreeMap::new();
-            solve.run(
-                &self.input,
-                entry_pos,
-                &mut current_day,
-                &mut output,
-                max_clean_cnt,
-                &mut acts_map,
-            );
+
+            'outer: loop {
+                let current_time = my_lib::time::update();
+                if current_time >= my_lib::time::LIMIT {
+                    break;
+                }
+
+                cnt += 1;
+                let entry_pos = (0, 0);
+                let mut solve = solver::CleanAroundHighA::new(self.input.N);
+                let mut current_day = 0;
+                let max_clean_cnt = std::usize::MAX;
+                let mut output = Output::new();
+                solve.run(
+                    &self.input,
+                    entry_pos,
+                    &mut current_day,
+                    &mut output,
+                    max_clean_cnt,
+                    &mut acts_map,
+                    &dist_maps,
+                    &mut rng,
+                );
+                let (score, _) = Tools::compute_score(&self.input, &output);
+                if score < best_score {
+                    best_score = score;
+                    best_output = output.clone();
+                }
+            }
             //areas.debug_id_map();
-        } else if solve == "4" {
         }
 
-        output.submit();
-
-        let (score, _) = Tools::compute_score(&self.input, &output);
-
-        // //let mut initial_state = State::new();
-        // let mut best_output = Output::new();
-        // let mut best_state = State::new();
-        // best_state.compute_score();
-
-        // 'outer: loop {
-        //     let current_time = my_lib::time::update();
-        //     if current_time >= my_lib::time::LIMIT {
-        //         break;
-        //     }
-
-        //     cnt += 1;
-
-        //     let mut output = Output::new();
-
-        //     // A:近傍探索
-        //     let mut state: State = best_state.clone();
-        //     state.change(&mut output, &mut rng);
-
-        //     // B:壊して再構築
-        //     // best_outputの一部を破壊して、それまでのoutputを使ってstateを作り直して再構築したり
-        //     // outputの変形
-        //     // best_output.remove(&mut output, &mut rng);
-        //     // let mut state: State = initial_state.clone();
-        //     // stateを新outputの情報で復元
-        //     // そこから続きやる
-
-        //     // スコア計算
-        //     state.compute_score();
-
-        //     // 状態更新
-        //     solver::mountain(&mut best_state, &state, &mut best_output, &output);
-        //     //solver::simulated_annealing(&mut best_state, &state, &mut best_output, &output, self.current_time, &mut rng);
-        // }
-
-        //best_output.submit();
+        best_output.submit();
 
         eprintln!("{} ", cnt);
-        let best_score = if output.out.len() >= 100000 {
+        let score = if best_output.out.len() >= 100000 {
             -1
         } else {
-            score
+            best_score
         };
-        eprintln!("{} ", best_score);
+        eprintln!("{} ", score);
         eprintln!("{} ", self.input.N);
-        eprintln!("{} ", output.out.len());
+        eprintln!("{} ", best_output.out.len());
     }
 }
 
@@ -257,6 +241,8 @@ mod solver {
         output: &mut Output,
         prev_day: &mut Vec<Vec<usize>>,
         remains: &mut BTreeSet<(usize, usize)>,
+        dist_maps: &Vec<Vec<DistMap>>,
+        rng: &mut Mcg128Xsl64,
     ) {
         let entry_pos = *last_pos;
 
@@ -271,17 +257,19 @@ mod solver {
                 a_ranking.push((a, (i, j)));
             }
         }
-        if a_ranking.len() == 0 {
-            return;
-        }
-        a_ranking.sort();
-        a_ranking.reverse();
+
+        // 降順ソート
+        a_ranking.sort_by(|a, b| b.0.cmp(&a.0));
 
         let high_a = a_ranking[0].0;
 
-        let cnt_max = a_ranking.len() / 5;
+        let num_devide = rng.gen_range(4..10);
+        //let num_devide = 5;
+
+        let cnt_max = a_ranking.len() / num_devide;
         let mut cnt = 0;
         let mut pos_set = BTreeSet::new();
+
         for &(a, (i, j)) in a_ranking.iter() {
             cnt += 1;
 
@@ -306,6 +294,7 @@ mod solver {
             output,
             prev_day,
             remains,
+            dist_maps,
         );
     }
 
@@ -376,8 +365,7 @@ mod solver {
         start
     }
 
-    type DistMap = Vec<Vec<usize>>;
-    pub fn create_dist_maps(input: &Input) {
+    pub fn create_dist_maps(input: &Input) -> Vec<Vec<DistMap>> {
         let mut dist_maps: Vec<Vec<DistMap>> =
             vec![vec![vec![vec![std::usize::MAX; input.N]; input.N]; input.N]; input.N];
         for i in 0..input.N {
@@ -386,6 +374,7 @@ mod solver {
                 dist_maps[i][j] = dist_map;
             }
         }
+        dist_maps
     }
 
     pub fn compute_dist_to_all_pos(input: &Input, start: (usize, usize)) -> DistMap {
@@ -429,8 +418,11 @@ mod solver {
             output: &mut Output,
             max_clean_cnt: usize,
             acts_map: &mut BTreeMap<((usize, usize), (usize, usize)), Vec<char>>,
+            dist_maps: &Vec<Vec<DistMap>>,
+            rng: &mut Mcg128Xsl64,
         ) {
             let first_pos = solver::decide_start_point(&input);
+
             let mut remains = BTreeSet::new();
             for i in 0..input.N {
                 for j in 0..input.N {
@@ -455,8 +447,7 @@ mod solver {
 
             let mut current_pos: (usize, usize) = to;
             for cnt in 0..max_clean_cnt {
-                if output.out.len() >= 90000 {
-                    //if output.out.len() >= (100000 - (remains.len() + 2) * input.N * input.N) {
+                if output.out.len() >= 5000 {
                     break;
                 }
 
@@ -468,10 +459,12 @@ mod solver {
                     output,
                     &mut prev_day,
                     &mut remains,
+                    dist_maps,
+                    rng,
                 );
 
-                if cnt != 0 && cnt % 2 == 0 {
-                    let len = remains.len() / 5;
+                if cnt != 0 && cnt % 3 == 0 {
+                    let len = remains.len() / 3;
                     let mut pos_set = BTreeSet::new();
                     for &(i, j) in remains.iter().take(len) {
                         let di = (i as i64 - current_pos.0 as i64).abs();
@@ -491,6 +484,7 @@ mod solver {
                         output,
                         &mut prev_day,
                         &mut remains,
+                        dist_maps,
                     );
                 }
             }
@@ -504,6 +498,7 @@ mod solver {
                 output,
                 &mut prev_day,
                 &mut BTreeSet::new(),
+                dist_maps,
             );
 
             let from = current_pos;
@@ -552,41 +547,23 @@ mod solver {
         output: &mut Output,
         prev_day: &mut Vec<Vec<usize>>,
         remains: &mut BTreeSet<(usize, usize)>,
+        dist_maps: &Vec<Vec<DistMap>>,
     ) {
         let entry_pos = *last_pos;
-        // entry_posから近い点をbfsで探し移動。その点からさらに近い点に移動。を繰り返す
         let mut pos_vec: Vec<(usize, usize)> = vec![];
         let mut i = entry_pos.0;
         let mut j = entry_pos.1;
         while pos_set.len() > 0 {
             let mut q = VecDeque::new();
             q.push_back((i, j));
-            let mut has_seen = BTreeSet::new();
-            has_seen.insert((i, j));
-            let mut dist = vec![vec![std::usize::MAX; input.N]; input.N];
-            dist[i][j] = 0;
             let mut pos_min = (std::usize::MAX, std::usize::MAX);
-            'x: while let Some((i, j)) = q.pop_front() {
-                for dir in 0..4_usize {
-                    let (di, dj) = DIJ[dir];
-                    let (ni, nj) = (i + di, j + dj);
-                    if ni >= input.N || nj >= input.N {
-                        continue;
-                    }
-                    if has_seen.contains(&(ni, nj)) {
-                        continue;
-                    }
-                    if (di == 0 && input.v[i][min(j, nj)] == '0')
-                        || (dj == 0 && input.h[min(i, ni)][j] == '0')
-                    {
-                        q.push_back((ni, nj));
-                        has_seen.insert((ni, nj));
-                        dist[ni][nj] = dist[i][j] + 1;
-                        if pos_set.contains(&(ni, nj)) {
-                            pos_min = (ni, nj);
-                            break 'x;
-                        }
-                    }
+            let mut min_dist = std::usize::MAX;
+            for &(ni, nj) in pos_set.iter() {
+                let dist_map = &dist_maps[i][j];
+                let dist = dist_map[ni][nj];
+                if dist < min_dist {
+                    min_dist = dist;
+                    pos_min = (ni, nj);
                 }
             }
             pos_vec.push(pos_min);
@@ -855,7 +832,7 @@ mod my_lib {
         }
 
         // TODO: set LIMIT
-        pub const LIMIT: f64 = 0.3;
+        pub const LIMIT: f64 = 1.8;
     }
 
     pub trait Mat<S, T> {
