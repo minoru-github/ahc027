@@ -66,6 +66,8 @@ impl Sim {
 
         let mut output: Output = Output::new();
 
+        //solver::create_dist_maps(&self.input);
+
         let solve = "3";
         if solve == "1" {
             let mut simple_dfs = SimpleDfs::new(self.input.clone());
@@ -139,6 +141,7 @@ impl Sim {
         };
         eprintln!("{} ", best_score);
         eprintln!("{} ", self.input.N);
+        eprintln!("{} ", output.out.len());
     }
 }
 
@@ -268,6 +271,9 @@ mod solver {
                 a_ranking.push((a, (i, j)));
             }
         }
+        if a_ranking.len() == 0 {
+            return;
+        }
         a_ranking.sort();
         a_ranking.reverse();
 
@@ -291,11 +297,16 @@ mod solver {
         }
 
         // entry_posから近い点に移動。その点からさらに近い点に移動。を繰り返す
-        let mut actions = move_around_pos_set(input, current_day, last_pos, acts_map, &mut pos_set);
-        remove_remains_from_actions(entry_pos, &actions, remains);
-        // 通過した点のprev_dayを更新
-        regist_prev_day(entry_pos, &actions, current_day, prev_day);
-        output.add(&actions);
+        move_around_pos_set(
+            input,
+            current_day,
+            last_pos,
+            acts_map,
+            &mut pos_set,
+            output,
+            prev_day,
+            remains,
+        );
     }
 
     pub fn remove_remains_from_actions(
@@ -365,6 +376,43 @@ mod solver {
         start
     }
 
+    type DistMap = Vec<Vec<usize>>;
+    pub fn create_dist_maps(input: &Input) {
+        let mut dist_maps: Vec<Vec<DistMap>> =
+            vec![vec![vec![vec![std::usize::MAX; input.N]; input.N]; input.N]; input.N];
+        for i in 0..input.N {
+            for j in 0..input.N {
+                let dist_map = compute_dist_to_all_pos(input, (i, j));
+                dist_maps[i][j] = dist_map;
+            }
+        }
+    }
+
+    pub fn compute_dist_to_all_pos(input: &Input, start: (usize, usize)) -> DistMap {
+        let mut dist_map: DistMap = vec![vec![std::usize::MAX; input.N]; input.N];
+        let mut q = VecDeque::new();
+        q.push_back(start);
+        dist_map[start.0][start.1] = 0;
+        while let Some((i, j)) = q.pop_front() {
+            for dir in 0..4_usize {
+                let (di, dj) = DIJ[dir];
+                let (ni, nj) = (i + di, j + dj);
+                if ni >= input.N || nj >= input.N {
+                    continue;
+                }
+                if (di == 0 && input.v[i][min(j, nj)] == '0')
+                    || (dj == 0 && input.h[min(i, ni)][j] == '0')
+                {
+                    if dist_map[ni][nj] > dist_map[i][j] + 1 {
+                        dist_map[ni][nj] = dist_map[i][j] + 1;
+                        q.push_back((ni, nj));
+                    }
+                }
+            }
+        }
+        dist_map
+    }
+
     #[derive(Clone, Debug)]
     pub struct CleanAroundHighA {}
 
@@ -383,19 +431,6 @@ mod solver {
             acts_map: &mut BTreeMap<((usize, usize), (usize, usize)), Vec<char>>,
         ) {
             let first_pos = solver::decide_start_point(&input);
-
-            let from = entry_pos;
-            let to = first_pos;
-            if let Some(act) = acts_map.get(&(from, to)) {
-                output.add(&act);
-            } else {
-                let act = compute_path_with_bfs(input, from, to);
-                output.add(&act);
-                acts_map.insert((from, to), act.clone());
-            }
-
-            let mut current_pos: (usize, usize) = to;
-
             let mut remains = BTreeSet::new();
             for i in 0..input.N {
                 for j in 0..input.N {
@@ -405,9 +440,23 @@ mod solver {
 
             let mut prev_day = vec![vec![0; input.N]; input.N];
 
+            let from = entry_pos;
+            let to = first_pos;
+            move_between_two_points(
+                input,
+                from,
+                to,
+                output,
+                acts_map,
+                current_day,
+                &mut prev_day,
+                &mut remains,
+            );
+
+            let mut current_pos: (usize, usize) = to;
             for cnt in 0..max_clean_cnt {
-                if output.out.len() >= (100000 - (remains.len() + 2) * input.N * input.N) {
-                    //eprintln!("{:?} ", output.out.len());
+                if output.out.len() >= 90000 {
+                    //if output.out.len() >= (100000 - (remains.len() + 2) * input.N * input.N) {
                     break;
                 }
 
@@ -422,46 +471,75 @@ mod solver {
                 );
 
                 if cnt != 0 && cnt % 2 == 0 {
-                    let entry_pos = current_pos;
                     let len = remains.len() / 5;
                     let mut pos_set = BTreeSet::new();
                     for &(i, j) in remains.iter().take(len) {
-                        let di = (i as i64 - entry_pos.0 as i64).abs();
-                        let dj = (j as i64 - entry_pos.1 as i64).abs();
+                        let di = (i as i64 - current_pos.0 as i64).abs();
+                        let dj = (j as i64 - current_pos.1 as i64).abs();
                         let dist = (di + dj) as usize;
                         if dist > input.N {
                             continue;
                         }
                         pos_set.insert((i, j));
                     }
-                    let actions = move_around_pos_set(
+                    move_around_pos_set(
                         input,
                         current_day,
                         &mut current_pos,
                         acts_map,
                         &mut pos_set,
+                        output,
+                        &mut prev_day,
+                        &mut remains,
                     );
-                    regist_prev_day(entry_pos, &actions, current_day, &mut prev_day);
-                    remove_remains_from_actions(entry_pos, &actions, &mut remains);
-                    output.add(&actions);
                 }
             }
 
-            let entry_pos = current_pos;
-            let actions =
-                move_around_pos_set(input, current_day, &mut current_pos, acts_map, &mut remains);
-            regist_prev_day(entry_pos, &actions, current_day, &mut prev_day);
-            output.add(&actions);
+            move_around_pos_set(
+                input,
+                current_day,
+                &mut current_pos,
+                acts_map,
+                &mut remains,
+                output,
+                &mut prev_day,
+                &mut BTreeSet::new(),
+            );
 
-            let start = current_pos;
-            let goal = (0, 0);
-            if let Some(act) = acts_map.get(&(start, goal)) {
-                output.add(&act);
-            } else {
-                let act = compute_path_with_bfs(input, start, goal);
-                output.add(&act);
-                acts_map.insert((start, goal), act.clone());
-            }
+            let from = current_pos;
+            let to = (0, 0);
+            move_between_two_points(
+                input,
+                from,
+                to,
+                output,
+                acts_map,
+                current_day,
+                &mut prev_day,
+                &mut remains,
+            );
+        }
+    }
+
+    pub fn move_between_two_points(
+        input: &Input,
+        from: (usize, usize),
+        to: (usize, usize),
+        output: &mut Output,
+        acts_map: &mut BTreeMap<((usize, usize), (usize, usize)), Vec<char>>,
+        current_day: &mut usize,
+        prev_day: &mut Vec<Vec<usize>>,
+        remains: &mut BTreeSet<(usize, usize)>,
+    ) {
+        if let Some(act) = acts_map.get(&(from, to)) {
+            output.add(&act);
+            regist_prev_day(from, &act, current_day, prev_day);
+            remove_remains_from_actions(from, &act, remains)
+        } else {
+            let act = move_by_bfs(input, from, to, acts_map);
+            output.add(&act);
+            regist_prev_day(from, &act, current_day, prev_day);
+            remove_remains_from_actions(from, &act, remains)
         }
     }
 
@@ -471,11 +549,15 @@ mod solver {
         last_pos: &mut (usize, usize),
         acts_map: &mut BTreeMap<((usize, usize), (usize, usize)), Vec<char>>,
         pos_set: &mut BTreeSet<(usize, usize)>,
-    ) -> Vec<char> {
+        output: &mut Output,
+        prev_day: &mut Vec<Vec<usize>>,
+        remains: &mut BTreeSet<(usize, usize)>,
+    ) {
+        let entry_pos = *last_pos;
         // entry_posから近い点をbfsで探し移動。その点からさらに近い点に移動。を繰り返す
-        let mut pos_vec = vec![];
-        let mut i = last_pos.0;
-        let mut j = last_pos.1;
+        let mut pos_vec: Vec<(usize, usize)> = vec![];
+        let mut i = entry_pos.0;
+        let mut j = entry_pos.1;
         while pos_set.len() > 0 {
             let mut q = VecDeque::new();
             q.push_back((i, j));
@@ -520,22 +602,22 @@ mod solver {
             if start == goal {
                 continue;
             }
-            let from_to = (start, goal);
-            if let Some(act) = acts_map.get(&from_to) {
-                for &c in act.iter() {
-                    actions.push(c);
-                }
-            } else {
-                let act = compute_path_with_bfs(input, start, goal);
-                for &c in act.iter() {
-                    actions.push(c);
-                }
-                acts_map.insert(from_to, act.clone());
-            }
+
+            let from = start;
+            let to = goal;
+            move_between_two_points(
+                input,
+                from,
+                to,
+                output,
+                acts_map,
+                current_day,
+                prev_day,
+                remains,
+            );
 
             *last_pos = goal;
         }
-        actions
     }
 
     pub fn regist_prev_day(
@@ -610,13 +692,14 @@ mod solver {
         }
     }
 
-    pub fn compute_path_with_bfs(
+    pub fn move_by_bfs(
         input: &Input,
-        start: (usize, usize),
-        goal: (usize, usize),
+        from: (usize, usize),
+        to: (usize, usize),
+        acts_map: &mut BTreeMap<((usize, usize), (usize, usize)), Vec<char>>,
     ) -> Vec<char> {
         let mut q = VecDeque::new();
-        q.push_back(start);
+        q.push_back(from);
         let mut prev = vec![vec![(0, 0); input.N]; input.N];
         let mut min_dist = vec![vec![std::usize::MAX; input.N]; input.N];
         while let Some((i, j)) = q.pop_front() {
@@ -636,7 +719,7 @@ mod solver {
                         prev[ni][nj] = (i, j);
                         q.push_back((ni, nj));
 
-                        if (ni, nj) == goal {
+                        if (ni, nj) == to {
                             break;
                         }
                     }
@@ -645,8 +728,8 @@ mod solver {
         }
 
         let mut path = VecDeque::new();
-        let mut cur = goal;
-        while cur != start {
+        let mut cur = to;
+        while cur != from {
             let (i, j) = cur;
             let (pi, pj) = prev[i][j];
 
@@ -666,6 +749,12 @@ mod solver {
 
             cur = prev[i][j];
         }
+
+        let mut actions = Vec::<char>::new();
+        for &c in path.iter() {
+            actions.push(c);
+        }
+        acts_map.insert((from, to), actions);
 
         path.into_iter().collect()
     }
