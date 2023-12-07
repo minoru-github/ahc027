@@ -111,6 +111,7 @@ impl Sim {
                     best_score = score;
                     best_output = output.clone();
                 }
+                break 'outer;
             }
             //areas.debug_id_map();
         }
@@ -217,6 +218,19 @@ mod solver {
 
     use super::*;
 
+    // pub fn reconnect_output(
+    //     input: &Input,
+    //     output: &Output,
+    //     acts_map: &mut BTreeMap<((usize, usize), (usize, usize)), Vec<char>>,
+    //     remains: &mut BTreeSet<(usize, usize)>,
+    //     rng: &mut Mcg128Xsl64,
+    // ) -> Output {
+    //     let index_0 = rng.gen_range(0..output.out.len() - 10);
+    //     let move_cnt = rng.gen_range(1..10);
+    //     let index_1 = index_0 + move_cnt;
+
+    // }
+
     pub fn compute_clearness(input: &Input, output: &Output) -> i64 {
         let mut clearness = 0;
         let mut pos = (0, 0);
@@ -251,7 +265,7 @@ mod solver {
         for i in 0..input.N {
             for j in 0..input.N {
                 // 初回で全てa = 0になってしまうので+1しておく
-                let diff = (*current_day - prev_day[i][j] + 1) as i64;
+                let diff = (*current_day - prev_day[i][j] + 2) as i64;
                 let d = input.d[i][j];
                 let a = d * diff;
                 a_ranking.push((a, (i, j)));
@@ -263,8 +277,8 @@ mod solver {
 
         let high_a = a_ranking[0].0;
 
-        let num_devide = rng.gen_range(4..10);
-        //let num_devide = 5;
+        //let num_devide = rng.gen_range(4..10);
+        let num_devide = 5;
 
         let cnt_max = a_ranking.len() / num_devide;
         let mut cnt = 0;
@@ -295,6 +309,7 @@ mod solver {
             prev_day,
             remains,
             dist_maps,
+            rng,
         );
     }
 
@@ -443,11 +458,17 @@ mod solver {
                 current_day,
                 &mut prev_day,
                 &mut remains,
+                rng,
             );
 
             let mut current_pos: (usize, usize) = to;
+            let start_time = my_lib::time::update();
             for cnt in 0..max_clean_cnt {
-                if output.out.len() >= 5000 {
+                if output.out.len() >= 95000 {
+                    break;
+                }
+                let current_time = my_lib::time::update();
+                if current_time - start_time >= my_lib::time::LIMIT {
                     break;
                 }
 
@@ -485,6 +506,7 @@ mod solver {
                         &mut prev_day,
                         &mut remains,
                         dist_maps,
+                        rng,
                     );
                 }
             }
@@ -499,6 +521,7 @@ mod solver {
                 &mut prev_day,
                 &mut BTreeSet::new(),
                 dist_maps,
+                rng,
             );
 
             let from = current_pos;
@@ -512,6 +535,7 @@ mod solver {
                 current_day,
                 &mut prev_day,
                 &mut remains,
+                rng,
             );
         }
     }
@@ -525,13 +549,14 @@ mod solver {
         current_day: &mut usize,
         prev_day: &mut Vec<Vec<usize>>,
         remains: &mut BTreeSet<(usize, usize)>,
+        rng: &mut Mcg128Xsl64,
     ) {
         if let Some(act) = acts_map.get(&(from, to)) {
             output.add(&act);
             regist_prev_day(from, &act, current_day, prev_day);
             remove_remains_from_actions(from, &act, remains)
         } else {
-            let act = move_by_bfs(input, from, to, acts_map);
+            let act = move_by_bfs(input, from, to, acts_map, current_day, prev_day, rng);
             output.add(&act);
             regist_prev_day(from, &act, current_day, prev_day);
             remove_remains_from_actions(from, &act, remains)
@@ -548,6 +573,7 @@ mod solver {
         prev_day: &mut Vec<Vec<usize>>,
         remains: &mut BTreeSet<(usize, usize)>,
         dist_maps: &Vec<Vec<DistMap>>,
+        rng: &mut Mcg128Xsl64,
     ) {
         let entry_pos = *last_pos;
         let mut pos_vec: Vec<(usize, usize)> = vec![];
@@ -591,6 +617,7 @@ mod solver {
                 current_day,
                 prev_day,
                 remains,
+                rng,
             );
 
             *last_pos = goal;
@@ -674,11 +701,16 @@ mod solver {
         from: (usize, usize),
         to: (usize, usize),
         acts_map: &mut BTreeMap<((usize, usize), (usize, usize)), Vec<char>>,
+        current_day: &mut usize,
+        prev_day: &mut Vec<Vec<usize>>,
+        rng: &mut Mcg128Xsl64,
     ) -> Vec<char> {
         let mut q = VecDeque::new();
         q.push_back(from);
         let mut prev = vec![vec![(0, 0); input.N]; input.N];
-        let mut min_dist = vec![vec![std::usize::MAX; input.N]; input.N];
+        let dist_and_sum_a = (std::usize::MAX, 0);
+        let mut min_dist = vec![vec![dist_and_sum_a; input.N]; input.N];
+        min_dist[from.0][from.1] = (0, 0);
         while let Some((i, j)) = q.pop_front() {
             for dir in 0..4_usize {
                 let (di, dj) = DIJ[dir];
@@ -690,9 +722,25 @@ mod solver {
                 if (di == 0 && input.v[i][min(j, nj)] == '0')
                     || (dj == 0 && input.h[min(i, ni)][j] == '0')
                 {
+                    let dist = min_dist[i][j].0 + 1;
+                    let days = *current_day - prev_day[ni][nj] + dist;
+                    let sum_a = min_dist[i][j].1 + input.d[ni][nj] * days as i64;
+
+                    let mut can_update = false;
+
                     // 最短経路を更新
-                    if min_dist[ni][nj] > min_dist[i][j] + 1 {
-                        min_dist[ni][nj] = min_dist[i][j] + 1;
+                    if min_dist[ni][nj].0 > dist {
+                        can_update = true;
+                    } else if min_dist[ni][nj].0 == dist {
+                        // 同じ距離の場合は、sum_aが大きい方を優先
+                        if min_dist[ni][nj].1 < sum_a {
+                            can_update = true;
+                        }
+                    }
+
+                    if can_update {
+                        min_dist[ni][nj].0 = dist;
+                        min_dist[ni][nj].1 = sum_a;
                         prev[ni][nj] = (i, j);
                         q.push_back((ni, nj));
 
@@ -704,6 +752,7 @@ mod solver {
             }
         }
 
+        let mut sum_d = 0;
         let mut path = VecDeque::new();
         let mut cur = to;
         while cur != from {
@@ -725,13 +774,18 @@ mod solver {
             }
 
             cur = prev[i][j];
+
+            sum_d += input.d[i][j];
         }
 
         let mut actions = Vec::<char>::new();
         for &c in path.iter() {
             actions.push(c);
         }
-        acts_map.insert((from, to), actions);
+
+        if actions.len() != 0 && (sum_d / actions.len() as i64) > 500 {
+            acts_map.insert((from, to), actions);
+        }
 
         path.into_iter().collect()
     }
