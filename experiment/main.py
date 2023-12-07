@@ -26,9 +26,10 @@ def parse_from_stderr(stderr: str):
     out = stderr.splitlines()
     cnt = int(out[0])
     score = int(out[1])
-    duration = float(out[3])
+    duration = float(out[4])
     N = int(out[2])
-    return cnt, score, duration, N
+    acts = int(out[3])
+    return cnt, score, duration, N, acts
 
 
 def run_ahc_exe(filename: pathlib.Path):
@@ -38,8 +39,8 @@ def run_ahc_exe(filename: pathlib.Path):
     with open(path) as text:
         proc = subprocess.run(cmd, shell=True, stdin=text,
                               stdout=PIPE, stderr=PIPE, text=True)
-        cnt, score, duration, N = parse_from_stderr(proc.stderr)
-    return filename.name, cnt, score, duration, N
+        cnt, score, duration, N, acts = parse_from_stderr(proc.stderr)
+    return filename.name, cnt, score, duration, N, acts
 
 
 def run_multi():
@@ -47,7 +48,7 @@ def run_multi():
     input_list = []
     for filename in pathlib.Path(data_path).glob("*.txt"):
         input_list.append(filename)
-    with Pool(processes=4) as p:
+    with Pool(processes=16) as p:
         result_list = p.map(func=run_ahc_exe, iterable=input_list)
     result_list.sort()
     return result_list
@@ -56,9 +57,9 @@ def run_multi():
 def output_result(result_list):
     total_score = 0
     total_cnt = 0
-    print("file;    total_score;         score;   cnt;   time;  N;")
+    print("file;    total_score;         score;   cnt;   time;  N;   cnt;")
     for i, result in enumerate(result_list):
-        filename, cnt, score, duration, N = result
+        filename, cnt, score, duration, N, acts = result
         total_score += score
         total_cnt += cnt
         check_point_col = set_color_to_check_point(i)
@@ -69,7 +70,8 @@ def output_result(result_list):
               + "{:6d};".format(cnt)
               # + "{}{:8d}{};" .format(check_point_col, total_cnt, Color.RESET)
               + " {:.4f};".format(duration)
-              + " {:2d}".format(N)
+              + " {:2d};".format(N)
+              + " {:6d}".format(acts)
               )
     # print("total: {}".format(total_score))
 
