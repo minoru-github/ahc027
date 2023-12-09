@@ -16,7 +16,7 @@ use std::{
     slice::SliceIndex,
 };
 
-use crate::{solver::SimpleDfs, Tools::compute_score};
+use crate::Tools::compute_score;
 
 fn main() {
     let start_time = my_lib::time::update();
@@ -26,26 +26,6 @@ fn main() {
     let end_time = my_lib::time::update();
     let duration = end_time - start_time;
     eprintln!("{:?} ", duration);
-}
-
-#[derive(Debug, Clone)]
-pub struct State {
-    score: usize,
-}
-
-impl State {
-    fn new() -> Self {
-        State { score: 0 }
-    }
-
-    fn change(&mut self, output: &mut Output, rng: &mut Mcg128Xsl64) {
-        //let val = rng.gen_range(-3, 4);
-        //self.x += val;
-    }
-
-    fn compute_score(&mut self) {
-        //self.score = 0;
-    }
 }
 
 type DistMap = Vec<Vec<usize>>;
@@ -67,66 +47,38 @@ impl Sim {
 
         let mut cnt = 0 as usize; // 試行回数
 
-        let mut best_score = std::i64::MAX;
-        let mut best_output = Output::new();
-
         let dist_maps = solver::create_dist_maps(&self.input);
 
-        let solve = "2";
-        if solve == "1" {
-            let mut output: Output = Output::new();
-            let mut simple_dfs = SimpleDfs::new(self.input.clone());
-            let start = (0, 0);
-            simple_dfs.run(&mut output, start);
-            let (score, _) = Tools::compute_score(&self.input, &output);
-            best_score = score;
-            best_output = output.clone();
-        } else if solve == "2" {
-            let mut acts_map = BTreeMap::new();
+        let mut acts_map = BTreeMap::new();
 
-            'outer: loop {
-                let current_time = my_lib::time::update();
-                if current_time >= my_lib::time::LIMIT {
-                    break;
-                }
+        let entry_pos = (0, 0);
+        let mut solve = solver::CleanAroundHighA::new(self.input.N);
+        let mut current_day = 0;
+        let max_clean_cnt = std::usize::MAX;
+        let mut output = Output::new();
+        solve.run(
+            &self.input,
+            entry_pos,
+            &mut current_day,
+            &mut output,
+            max_clean_cnt,
+            &mut acts_map,
+            &dist_maps,
+        );
+        let (score, _) = Tools::compute_score(&self.input, &output);
+        //areas.debug_id_map();
 
-                cnt += 1;
-                let entry_pos = (0, 0);
-                let mut solve = solver::CleanAroundHighA::new(self.input.N);
-                let mut current_day = 0;
-                let max_clean_cnt = std::usize::MAX;
-                let mut output = Output::new();
-                solve.run(
-                    &self.input,
-                    entry_pos,
-                    &mut current_day,
-                    &mut output,
-                    max_clean_cnt,
-                    &mut acts_map,
-                    &dist_maps,
-                    &mut rng,
-                );
-                let (score, _) = Tools::compute_score(&self.input, &output);
-                if score < best_score {
-                    best_score = score;
-                    best_output = output.clone();
-                }
-                break 'outer;
-            }
-            //areas.debug_id_map();
-        }
-
-        best_output.submit();
+        output.submit();
 
         eprintln!("{} ", cnt);
-        let score = if best_output.out.len() >= 100000 {
+        let score = if output.out.len() >= 100000 {
             -1
         } else {
-            best_score
+            score
         };
         eprintln!("{} ", score);
         eprintln!("{} ", self.input.N);
-        eprintln!("{} ", best_output.out.len());
+        eprintln!("{} ", output.out.len());
     }
 }
 
@@ -202,10 +154,6 @@ impl Output {
         }
     }
 
-    fn remove(&self, output: &mut Self, rng: &mut Mcg128Xsl64) {
-        // https://atcoder.jp/contests/ahc014/submissions/35567589 L558
-    }
-
     fn submit(&self) {
         println!("{}", self.out.iter().collect::<String>());
     }
@@ -214,37 +162,125 @@ impl Output {
 mod solver {
     use std::vec;
 
-    use rand::seq::index;
-
     use super::*;
 
-    // pub fn reconnect_output(
-    //     input: &Input,
-    //     output: &Output,
-    //     acts_map: &mut BTreeMap<((usize, usize), (usize, usize)), Vec<char>>,
-    //     remains: &mut BTreeSet<(usize, usize)>,
-    //     rng: &mut Mcg128Xsl64,
-    // ) -> Output {
-    //     let index_0 = rng.gen_range(0..output.out.len() - 10);
-    //     let move_cnt = rng.gen_range(1..10);
-    //     let index_1 = index_0 + move_cnt;
+    #[derive(Clone, Debug)]
+    pub struct CleanAroundHighA {}
 
-    // }
-
-    pub fn compute_clearness(input: &Input, output: &Output) -> i64 {
-        let mut clearness = 0;
-        let mut pos = (0, 0);
-        for &c in output.out.iter() {
-            match c {
-                'R' => pos.1 += 1,
-                'L' => pos.1 -= 1,
-                'D' => pos.0 += 1,
-                'U' => pos.0 -= 1,
-                _ => unreachable!(),
-            }
-            clearness += input.d[pos.0][pos.1];
+    impl CleanAroundHighA {
+        pub fn new(N: usize) -> Self {
+            CleanAroundHighA {}
         }
-        clearness
+
+        pub fn run(
+            &mut self,
+            input: &Input,
+            mut entry_pos: (usize, usize),
+            current_day: &mut usize,
+            output: &mut Output,
+            max_clean_cnt: usize,
+            acts_map: &mut BTreeMap<((usize, usize), (usize, usize)), Vec<char>>,
+            dist_maps: &Vec<Vec<DistMap>>,
+        ) {
+            let first_pos = solver::decide_start_point(&input);
+
+            let mut remains = BTreeSet::new();
+            for i in 0..input.N {
+                for j in 0..input.N {
+                    remains.insert((i, j));
+                }
+            }
+
+            let mut prev_day = vec![vec![0; input.N]; input.N];
+
+            let from = entry_pos;
+            let to = first_pos;
+            move_between_two_points(
+                input,
+                from,
+                to,
+                output,
+                acts_map,
+                current_day,
+                &mut prev_day,
+                &mut remains,
+                dist_maps,
+            );
+
+            let mut current_pos: (usize, usize) = to;
+            let start_time = my_lib::time::update();
+            for cnt in 0..max_clean_cnt {
+                if output.out.len() >= 98000 {
+                    break;
+                }
+                let current_time = my_lib::time::update();
+                if current_time - start_time >= my_lib::time::LIMIT {
+                    break;
+                }
+
+                clean_large_a(
+                    input,
+                    current_day,
+                    &mut current_pos,
+                    acts_map,
+                    output,
+                    &mut prev_day,
+                    &mut remains,
+                    dist_maps,
+                );
+
+                if cnt != 0 && cnt % 3 == 0 {
+                    let len = remains.len() / 3;
+                    let mut pos_set = BTreeSet::new();
+                    for &(i, j) in remains.iter().take(len) {
+                        let di = (i as i64 - current_pos.0 as i64).abs();
+                        let dj = (j as i64 - current_pos.1 as i64).abs();
+                        let dist = (di + dj) as usize;
+                        if dist > input.N {
+                            continue;
+                        }
+                        pos_set.insert((i, j));
+                    }
+                    move_around_pos_set(
+                        input,
+                        current_day,
+                        &mut current_pos,
+                        acts_map,
+                        &mut pos_set,
+                        output,
+                        &mut prev_day,
+                        &mut remains,
+                        dist_maps,
+                    );
+                }
+            }
+
+            move_around_pos_set(
+                input,
+                current_day,
+                &mut current_pos,
+                acts_map,
+                &mut remains,
+                output,
+                &mut prev_day,
+                &mut BTreeSet::new(),
+                dist_maps,
+            );
+
+            let from = current_pos;
+            let to = (0, 0);
+            move_between_two_points(
+                input,
+                from,
+                to,
+                output,
+                acts_map,
+                current_day,
+                &mut prev_day,
+                &mut remains,
+                dist_maps,
+            );
+        }
     }
 
     pub fn clean_large_a(
@@ -256,16 +292,16 @@ mod solver {
         prev_day: &mut Vec<Vec<usize>>,
         remains: &mut BTreeSet<(usize, usize)>,
         dist_maps: &Vec<Vec<DistMap>>,
-        rng: &mut Mcg128Xsl64,
     ) {
         let entry_pos = *last_pos;
 
-        // areaのaの高い順にソート
+        let dist_map = &dist_maps[entry_pos.0][entry_pos.1];
+        // aの高い順にソート
         let mut a_ranking = vec![];
         for i in 0..input.N {
             for j in 0..input.N {
-                // 初回で全てa = 0になってしまうので+1しておく
-                let diff = (*current_day - prev_day[i][j] + 2) as i64;
+                let dist = dist_map[i][j];
+                let diff = (*current_day - prev_day[i][j] + 1) as i64;
                 let d = input.d[i][j];
                 let a = d * diff;
                 a_ranking.push((a, (i, j)));
@@ -277,7 +313,6 @@ mod solver {
 
         let high_a = a_ranking[0].0;
 
-        //let num_devide = rng.gen_range(4..10);
         let num_devide = 5;
 
         let cnt_max = a_ranking.len() / num_devide;
@@ -286,7 +321,6 @@ mod solver {
 
         for &(a, (i, j)) in a_ranking.iter() {
             cnt += 1;
-
             pos_set.insert((i, j));
 
             if input.d[i][j] == 0 {
@@ -309,7 +343,6 @@ mod solver {
             prev_day,
             remains,
             dist_maps,
-            rng,
         );
     }
 
@@ -417,129 +450,6 @@ mod solver {
         dist_map
     }
 
-    #[derive(Clone, Debug)]
-    pub struct CleanAroundHighA {}
-
-    impl CleanAroundHighA {
-        pub fn new(N: usize) -> Self {
-            CleanAroundHighA {}
-        }
-
-        pub fn run(
-            &mut self,
-            input: &Input,
-            mut entry_pos: (usize, usize),
-            current_day: &mut usize,
-            output: &mut Output,
-            max_clean_cnt: usize,
-            acts_map: &mut BTreeMap<((usize, usize), (usize, usize)), Vec<char>>,
-            dist_maps: &Vec<Vec<DistMap>>,
-            rng: &mut Mcg128Xsl64,
-        ) {
-            let first_pos = solver::decide_start_point(&input);
-
-            let mut remains = BTreeSet::new();
-            for i in 0..input.N {
-                for j in 0..input.N {
-                    remains.insert((i, j));
-                }
-            }
-
-            let mut prev_day = vec![vec![0; input.N]; input.N];
-
-            let from = entry_pos;
-            let to = first_pos;
-            move_between_two_points(
-                input,
-                from,
-                to,
-                output,
-                acts_map,
-                current_day,
-                &mut prev_day,
-                &mut remains,
-                rng,
-            );
-
-            let mut current_pos: (usize, usize) = to;
-            let start_time = my_lib::time::update();
-            for cnt in 0..max_clean_cnt {
-                if output.out.len() >= 95000 {
-                    break;
-                }
-                let current_time = my_lib::time::update();
-                if current_time - start_time >= my_lib::time::LIMIT {
-                    break;
-                }
-
-                clean_large_a(
-                    input,
-                    current_day,
-                    &mut current_pos,
-                    acts_map,
-                    output,
-                    &mut prev_day,
-                    &mut remains,
-                    dist_maps,
-                    rng,
-                );
-
-                if cnt != 0 && cnt % 3 == 0 {
-                    let len = remains.len() / 3;
-                    let mut pos_set = BTreeSet::new();
-                    for &(i, j) in remains.iter().take(len) {
-                        let di = (i as i64 - current_pos.0 as i64).abs();
-                        let dj = (j as i64 - current_pos.1 as i64).abs();
-                        let dist = (di + dj) as usize;
-                        if dist > input.N {
-                            continue;
-                        }
-                        pos_set.insert((i, j));
-                    }
-                    move_around_pos_set(
-                        input,
-                        current_day,
-                        &mut current_pos,
-                        acts_map,
-                        &mut pos_set,
-                        output,
-                        &mut prev_day,
-                        &mut remains,
-                        dist_maps,
-                        rng,
-                    );
-                }
-            }
-
-            move_around_pos_set(
-                input,
-                current_day,
-                &mut current_pos,
-                acts_map,
-                &mut remains,
-                output,
-                &mut prev_day,
-                &mut BTreeSet::new(),
-                dist_maps,
-                rng,
-            );
-
-            let from = current_pos;
-            let to = (0, 0);
-            move_between_two_points(
-                input,
-                from,
-                to,
-                output,
-                acts_map,
-                current_day,
-                &mut prev_day,
-                &mut remains,
-                rng,
-            );
-        }
-    }
-
     pub fn move_between_two_points(
         input: &Input,
         from: (usize, usize),
@@ -549,14 +459,14 @@ mod solver {
         current_day: &mut usize,
         prev_day: &mut Vec<Vec<usize>>,
         remains: &mut BTreeSet<(usize, usize)>,
-        rng: &mut Mcg128Xsl64,
+        dist_maps: &Vec<Vec<DistMap>>,
     ) {
         if let Some(act) = acts_map.get(&(from, to)) {
             output.add(&act);
             regist_prev_day(from, &act, current_day, prev_day);
             remove_remains_from_actions(from, &act, remains)
         } else {
-            let act = move_by_bfs(input, from, to, acts_map, current_day, prev_day, rng);
+            let act = move_by_bfs(input, from, to, acts_map, current_day, prev_day, dist_maps);
             output.add(&act);
             regist_prev_day(from, &act, current_day, prev_day);
             remove_remains_from_actions(from, &act, remains)
@@ -573,7 +483,6 @@ mod solver {
         prev_day: &mut Vec<Vec<usize>>,
         remains: &mut BTreeSet<(usize, usize)>,
         dist_maps: &Vec<Vec<DistMap>>,
-        rng: &mut Mcg128Xsl64,
     ) {
         let entry_pos = *last_pos;
         let mut pos_vec: Vec<(usize, usize)> = vec![];
@@ -617,7 +526,7 @@ mod solver {
                 current_day,
                 prev_day,
                 remains,
-                rng,
+                dist_maps,
             );
 
             *last_pos = goal;
@@ -645,65 +554,14 @@ mod solver {
         }
     }
 
-    pub fn compute_d_ranking(input: &Input) -> Vec<(i64, (usize, usize))> {
-        let mut d_ranking = vec![];
-        for i in 0..input.N {
-            for j in 0..input.N {
-                d_ranking.push((input.d[i][j], (i, j)));
-            }
-        }
-        d_ranking.sort();
-        d_ranking.reverse();
-        d_ranking
-    }
-
-    pub struct SimpleDfs {
-        input: Input,
-    }
-
-    impl SimpleDfs {
-        pub fn new(input: Input) -> Self {
-            SimpleDfs { input }
-        }
-
-        pub fn run(self, output: &mut Output, start: (usize, usize)) {
-            let mut has_seen = vec![vec![false; self.input.N]; self.input.N];
-
-            self.dfs(start, &mut has_seen, output);
-        }
-
-        fn dfs(&self, (i, j): (usize, usize), has_seen: &mut Vec<Vec<bool>>, output: &mut Output) {
-            has_seen[i][j] = true;
-            for dir in 0..4_usize {
-                let (di, dj) = DIJ[dir];
-                let (ni, nj) = (i + di, j + dj);
-                if ni >= self.input.N || nj >= self.input.N {
-                    continue;
-                }
-                if has_seen[ni][nj] {
-                    continue;
-                }
-                if (di == 0 && self.input.v[i][min(j, nj)] == '0')
-                    || (dj == 0 && self.input.h[min(i, ni)][j] == '0')
-                {
-                    let c = DIR.chars().nth(dir).unwrap();
-                    output.out.push(c);
-                    self.dfs((ni, nj), has_seen, output);
-                    let c = DIR.chars().nth((dir + 2) % 4).unwrap();
-                    output.out.push(c);
-                }
-            }
-        }
-    }
-
     pub fn move_by_bfs(
         input: &Input,
         from: (usize, usize),
         to: (usize, usize),
         acts_map: &mut BTreeMap<((usize, usize), (usize, usize)), Vec<char>>,
-        current_day: &mut usize,
+        current_day: &usize,
         prev_day: &mut Vec<Vec<usize>>,
-        rng: &mut Mcg128Xsl64,
+        dist_maps: &Vec<Vec<DistMap>>,
     ) -> Vec<char> {
         let mut q = VecDeque::new();
         q.push_back(from);
@@ -723,6 +581,9 @@ mod solver {
                     || (dj == 0 && input.h[min(i, ni)][j] == '0')
                 {
                     let dist = min_dist[i][j].0 + 1;
+                    if dist > dist_maps[from.0][from.1][ni][nj] {
+                        continue;
+                    }
                     let days = *current_day - prev_day[ni][nj] + dist;
                     let sum_a = min_dist[i][j].1 + input.d[ni][nj] * days as i64;
 
@@ -778,87 +639,13 @@ mod solver {
             sum_d += input.d[i][j];
         }
 
-        let mut actions = Vec::<char>::new();
-        for &c in path.iter() {
-            actions.push(c);
-        }
+        let actions = Vec::from(path);
 
         if actions.len() != 0 && (sum_d / actions.len() as i64) > 500 {
-            acts_map.insert((from, to), actions);
+            acts_map.insert((from, to), actions.clone());
         }
 
-        path.into_iter().collect()
-    }
-
-    pub fn get_back_path(path: &Vec<char>) -> Vec<char> {
-        let mut back_path = vec![];
-        for &c in path.iter().rev() {
-            let c = match c {
-                'R' => 'L',
-                'L' => 'R',
-                'U' => 'D',
-                'D' => 'U',
-                _ => unreachable!(),
-            };
-            back_path.push(c);
-        }
-        back_path
-    }
-
-    pub fn mountain(
-        best_state: &mut State,
-        state: &State,
-        best_output: &mut Output,
-        output: &Output,
-    ) {
-        //! bese_state(self)を更新する。
-
-        // 最小化の場合は > , 最大化の場合は < 。
-        if best_state.score > state.score {
-            *best_state = state.clone();
-            *best_output = output.clone();
-        }
-    }
-
-    const T0: f64 = 2e3;
-    //const T1: f64 = 6e2; // 終端温度が高いと最後まで悪いスコアを許容する
-    const T1: f64 = 6e1; // 終端温度が高いと最後まで悪いスコアを許容する
-    pub fn simulated_annealing(
-        best_state: &mut State,
-        state: &State,
-        best_output: &mut Output,
-        output: &Output,
-        current_time: f64,
-        rng: &mut Mcg128Xsl64,
-    ) {
-        //! 焼きなまし法
-        //! https://scrapbox.io/minyorupgc/%E7%84%BC%E3%81%8D%E3%81%AA%E3%81%BE%E3%81%97%E6%B3%95
-
-        static mut T: f64 = T0;
-        static mut CNT: usize = 0;
-        let temperature = unsafe {
-            CNT += 1;
-            if CNT % 100 == 0 {
-                let t = current_time / my_lib::time::LIMIT;
-                T = T0.powf(1.0 - t) * T1.powf(t);
-            }
-            T
-        };
-
-        // 最大化の場合
-        let delta = (best_state.score as f64) - (state.score as f64);
-        // 最小化の場合
-        //let delta = (state.score as f64) - (best_state.score as f64);
-
-        let prob = f64::exp(-delta / temperature).min(1.0);
-
-        if delta < 0.0 {
-            *best_state = state.clone();
-            *best_output = output.clone();
-        } else if rng.gen_bool(prob) {
-            *best_state = state.clone();
-            *best_output = output.clone();
-        }
+        actions
     }
 }
 
@@ -886,126 +673,7 @@ mod my_lib {
         }
 
         // TODO: set LIMIT
-        pub const LIMIT: f64 = 1.8;
-    }
-
-    pub trait Mat<S, T> {
-        fn set(&mut self, p: S, value: T);
-        fn get(&self, p: S) -> T;
-        fn swap(&mut self, p1: S, p2: S);
-    }
-
-    impl<T> Mat<&Point, T> for Vec<Vec<T>>
-    where
-        T: Copy,
-    {
-        fn set(&mut self, p: &Point, value: T) {
-            self[p.y][p.x] = value;
-        }
-
-        fn get(&self, p: &Point) -> T {
-            self[p.y][p.x]
-        }
-
-        fn swap(&mut self, p1: &Point, p2: &Point) {
-            let tmp = self[p1.y][p1.x];
-            self[p1.y][p1.x] = self[p2.y][p2.x];
-            self[p2.y][p2.x] = tmp;
-        }
-    }
-
-    impl<T> Mat<Point, T> for Vec<Vec<T>>
-    where
-        T: Copy,
-    {
-        fn set(&mut self, p: Point, value: T) {
-            self[p.y][p.x] = value;
-        }
-
-        fn get(&self, p: Point) -> T {
-            self[p.y][p.x]
-        }
-
-        fn swap(&mut self, p1: Point, p2: Point) {
-            let tmp = self[p1.y][p1.x];
-            self[p1.y][p1.x] = self[p2.y][p2.x];
-            self[p2.y][p2.x] = tmp;
-        }
-    }
-
-    impl Add for Point {
-        type Output = Result<Point, &'static str>;
-        fn add(self, rhs: Self) -> Self::Output {
-            let (x, y) = if cfg!(debug_assertions) {
-                // debugではオーバーフローでpanic発生するため、オーバーフローの溢れを明確に無視する(※1.60場合。それ以外は不明)
-                (self.x.wrapping_add(rhs.x), self.y.wrapping_add(rhs.y))
-            } else {
-                (self.x + rhs.x, self.y + rhs.y)
-            };
-
-            unsafe {
-                if let Some(width) = WIDTH {
-                    if x >= width || y >= width {
-                        return Err("out of range");
-                    }
-                }
-            }
-
-            Ok(Point { x, y })
-        }
-    }
-
-    static mut WIDTH: Option<usize> = None;
-
-    #[derive(Debug, Clone, PartialEq, Eq, Copy)]
-    pub struct Point {
-        pub x: usize, // →
-        pub y: usize, // ↑
-    }
-
-    impl Point {
-        pub fn new(x: usize, y: usize) -> Self {
-            Point { x, y }
-        }
-
-        pub fn set_width(width: usize) {
-            unsafe {
-                WIDTH = Some(width);
-            }
-        }
-    }
-
-    pub trait SortFloat {
-        fn sort(&mut self);
-        fn sort_rev(&mut self);
-    }
-
-    impl SortFloat for Vec<f64> {
-        fn sort(&mut self) {
-            //! 浮動小数点としてNANが含まれないことを約束されている場合のsort処理<br>
-            //! 小さい順
-            self.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        }
-        fn sort_rev(&mut self) {
-            //! 浮動小数点としてNANが含まれないことを約束されている場合のsort処理<br>  
-            //! 大きい順
-            self.sort_by(|a, b| b.partial_cmp(a).unwrap());
-        }
-    }
-
-    pub trait EvenOdd {
-        fn is_even(&self) -> bool;
-        fn is_odd(&self) -> bool;
-    }
-
-    impl EvenOdd for usize {
-        fn is_even(&self) -> bool {
-            self % 2 == 0
-        }
-
-        fn is_odd(&self) -> bool {
-            self % 2 != 0
-        }
+        pub const LIMIT: f64 = 1.9;
     }
 }
 
@@ -1340,11 +1008,11 @@ mod Tools {
             S.push(s);
             s += sum_d;
         }
-        for i in 0..input.N {
-            for j in 0..input.N {
-                average[i][j] = sum[i][j] as f64 / L as f64;
-            }
-        }
+        // for i in 0..input.N {
+        //     for j in 0..input.N {
+        //         average[i][j] = sum[i][j] as f64 / L as f64;
+        //     }
+        // }
         let score = (2 * S.iter().sum::<i64>() + L as i64) / (2 * L) as i64;
         Eval {
             score,
